@@ -1,0 +1,16 @@
+#!/bin/sh
+# ppi-quote-reply [PANE] — paste 're: "<newest tmux buffer>" -- ' into PANE
+# (default: the current pane), to quote part of an agent's response back to it.
+# It lands at the prompt's cursor: tmux cannot see an app's input, and keys
+# like End only reach the end of the current line in Claude Code and pi.
+#
+# Highlight text first: Claude Code's own mouse selection and tmux copy mode
+# both copy into a tmux buffer. Bracketed paste (-p) keeps a multi-line quote
+# in the prompt unsubmitted. Bound to prefix r and the right-click menu in
+# tmux.conf; install.sh installs it to ~/.pi/agent/bin, which every container
+# shares, so it needs no image rebuild.
+pane=${1:-$(tmux display -p '#{pane_id}')}
+sel=$(tmux show-buffer) || exit 0
+tmux copy-mode -q -t "$pane"              # leave copy/view mode if in it
+tmux set-buffer -b ppi-quote -- "re: \"$sel\" -- "
+tmux paste-buffer -p -d -b ppi-quote -t "$pane"
