@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+# tmux-jump-click PANE CLIENT — jump to a place in PANE picked by keyboard, as
+# tmux-jump picks one: type a character, then the label shown on the match.
+#
+# The labels are drawn in a borderless popup laid exactly over the pane, so
+# nothing is written into the program's own terminal. A place the program's
+# cursor can reach (red label) moves that cursor; any other (blue label) puts
+# the pane in copy mode with the copy cursor on it, as tmux-jump does. To move
+# its cursor, the program gets:
+#   - a real click (press and release, at the picked cell) when it has asked
+#     for mouse events (#{mouse_any_flag}): vim, Claude Code, pi, ...
+#   - Left/Right keys from its cursor to the picked place, which is how a shell
+#     prompt moves, when it has not, or when the click left the cursor where it
+#     was (agy asks for mouse events but ignores clicks in its input).
+# The rows its cursor can reach stay bright: the rows between the horizontal
+# rules around the cursor, which frame the input of Claude Code, pi and agy;
+# with no such rules, the rows between blank rows around the cursor for a
+# program that takes clicks (codex),
+# and otherwise the cursor's own line (wrapped rows included), since Up/Down
+# would walk a shell's history. If neither a click nor the keys get there after
+# all, the place is jumped to in copy mode.
+# Esc, or a key that matches nothing, cancels. The pane leaves copy mode first.
+#
+#   tmux-jump-click --pick SCREEN FIRST LAST OUT   (internal) the popup's
+#       side: read the keys, write "row col" of the pick to OUT; FIRST to LAST
+#       are the rows the cursor can reach
+import os
+import shlex
+import subprocess
+import sys
+import tempfile
+import termios
+import time
+import tty
+import unicodedata
+
+LABEL_KEYS = 'asdfghjklqwertyuiopzxcvbnm'
+DIM = '\x1b[0;38;5;244m'
+FAINT = '\x1b[0;2;38;5;244m'
+BRIGHT = '\x1b[0m'
+RULE_CHARS = '─━═'
+LABEL = '\x1b[0;1;38;5;231;48;5;160m'
+COPY_LABEL = '\x1b[0;1;38;5;231;48;5;25m'
+
+
+def tmux(*args):
+    return subprocess.run(['tmux', *args], check=True, text=True,
+                          stdout=subprocess.PIPE).stdout
+
+
+def cell_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in 'WF' else 1
+
+
+def cells(line):
+    """[(column, char)] for each character of a captured line."""
+    out, col = [], 0
+    for ch in line:
+        out.append((col, ch))
+        col += cell_width(ch)
+    return out
+
+
+def is_word(ch):
+    return ch.isalnum() or ch == '_'
+
+
+def matches(screen, key):
+    """(row, col) of each place KEY can jump to: a match that starts a word, or
+    any match when KEY is not a word character. Case-insensitive."""
+    found = []
+    for row, line in enumerate(screen):
+        prev = ' '
+        for col, ch in cells(line):
+            if ch.lower() == key.lower() and (not is_word(key) or not is_word(prev)):
+                found.append((row, col))
+            prev = ch
+    return found
+
+
+def labels_for(n):
+    size = 1
+    while len(LABEL_KEYS) ** size < n:
+        size += 1
+    out = ['']
+    for _ in range(size):
+        out = [p + k for p in out for k in LABEL_KEYS]
+    return out[:n]
+
+
+def draw(screen, width, first, last, labelled=()):
+    """Paint the captured screen, rows FIRST to LAST bright and the rest faint
+    (all dimmed when that is every row), with each (row, col, label) on top:
+    red where the cursor can go, blue for copy mode."""
+    whole = first == 0 and last >= len(screen) - 1
+    buf = ['\x1b[?25l\x1b[2J']
+    for row, line in enumerate(screen):
+        style = DIM if whole else BRIGHT if first <= row <= last else FAINT
+        buf.append(f'\x1b[{row + 1};1H{style}')
+        for col, ch in cells(line):
+            if col + cell_width(ch) <= width:
+                buf.append(ch)
+    for row, col, label in labelled:
+        style = LABEL if first <= row <= last else COPY_LABEL
+        buf.append(f'\x1b[{row + 1};{col + 1}H{style}{label}')
+    sys.stdout.write(''.join(buf) + '\x1b[0m')
+    sys.stdout.flush()
+
+
+def pick(screen_file, first, last, out_file):
+    with open(screen_file, encoding='utf-8') as f:
+        screen = f.read().split('\n')
+    width = os.get_terminal_size().columns
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    try:
+        draw(screen, width, first, last)
+        # Tells tests the popup is up and waiting for keys.
+        open(os.path.join(os.path.dirname(out_file), 'ready'), 'w').close()
+        key = os.read(fd, 8).decode('utf-8', 'replace')
+        if len(key) != 1 or not key.isprintable():
+            return
+        places = matches(screen, key)
+        labels = labels_for(len(places))
+        typed = ''
+        while len(places) > 1:
+            draw(screen, width, first, last, [(r, c, l[len(typed):])
+                                 for (r, c), l in zip(places, labels)])
+            k = os.read(fd, 8).decode('utf-8', 'replace')
+            typed += k
+            kept = [(p, l) for p, l in zip(places, labels) if l.startswith(typed)]
+            places, labels = [p for p, _ in kept], [l for _, l in kept]
+        if places:
+            with open(out_file, 'w') as f:
+                f.write('%d %d\n' % places[0])
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
+def click(pane, info, row, col):
+    if info['mouse_sgr_flag'] == '1':
+        seq = f'\x1b[<0;{col + 1};{row + 1}M\x1b[<0;{col + 1};{row + 1}m'
+    else:
+        # Legacy encoding: one byte per value, offset by 32; 3 is release.
+        pos = chr(32 + min(col + 1, 223)) + chr(32 + min(row + 1, 223))
+        seq = '\x1b[M ' + pos + '\x1b[M#' + pos
+    tmux('send-keys', '-t', pane, '-H', *('%02x' % b for b in seq.encode('latin-1')))
+
+
+def logical_lines(pane, width, height):
+    """[(first_row, text)] for each line on screen, wrapped rows joined."""
+    joined = tmux('capture-pane', '-p', '-J', '-t', pane).split('\n')
+    out, row = [], 0
+    for text in joined:
+        if row >= height:
+            break
+        out.append((row, text))
+        used = sum(cell_width(ch) for ch in text.rstrip())
+        row += max(1, -(-used // width))
+    return out
+
+
+def char_index(text, offset):
+    """Characters before cell OFFSET of TEXT; cells past the end count one each."""
+    for i, (col, _) in enumerate(cells(text)):
+        if col >= offset:
+            return i
+    return len(text) + offset - sum(cell_width(ch) for ch in text)
+
+
+def cursor_line(pane, info):
+    """(first_row, last_row, text) of the line the cursor is on."""
+    height = int(info['pane_height'])
+    cy = int(info['cursor_y'])
+    lines = logical_lines(pane, int(info['pane_width']), height)
+    for i, (first, text) in enumerate(lines):
+        last = lines[i + 1][0] - 1 if i + 1 < len(lines) else height - 1
+        if first <= cy <= last:
+            return first, last, text
+    return cy, cy, ''
+
+
+def is_rule(line):
+    """A horizontal rule, perhaps with a title in it: '── default ────'."""
+    s = line.strip()
+    return len(s) >= 3 and s[0] in RULE_CHARS and s[1] in RULE_CHARS and s[-1] in RULE_CHARS
+
+
+def reachable_rows(pane, info, screen):
+    """(first, last) rows that a click or the arrow keys can reach."""
+    cy = int(info['cursor_y'])
+    above = [r for r in range(min(cy, len(screen))) if is_rule(screen[r])]
+    below = [r for r in range(cy + 1, len(screen)) if is_rule(screen[r])]
+    if above and below:
+        return above[-1] + 1, below[0] - 1
+    if info['mouse_any_flag'] == '1':
+        first = last = cy
+        while first > 0 and screen[first - 1].strip():
+            first -= 1
+        while last + 1 < len(screen) and screen[last + 1].strip():
+            last += 1
+        return first, last
+    first, last, _ = cursor_line(pane, info)
+    return first, last
+
+
+def move_cursor(pane, info, row, col):
+    """Left/Right keys to (ROW, COL); False if it is not on the cursor's line."""
+    width = int(info['pane_width'])
+    cy, cx = int(info['cursor_y']), int(info['cursor_x'])
+    first, last, text = cursor_line(pane, info)
+    if not first <= row <= last:
+        return False
+    delta = (char_index(text, (row - first) * width + col)
+             - char_index(text, (cy - first) * width + cx))
+    if delta:
+        tmux('send-keys', '-t', pane, '-N', str(abs(delta)),
+             'Right' if delta > 0 else 'Left')
+    return True
+
+
+def copy_mode_jump(pane, screen, row, col):
+    """Copy mode with its cursor at (ROW, COL), which moves by character."""
+    tmux('copy-mode', '-t', pane)
+    for cmd in ['top-line', 'start-of-line']:
+        tmux('send-keys', '-t', pane, '-X', cmd)
+    chars = char_index(screen[row], col)
+    for count, cmd in [(row, 'cursor-down'), (chars, 'cursor-right')]:
+        if count:
+            tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
+
+
+def read_info(pane):
+    return dict(zip(FIELDS, tmux('display-message', '-p', '-t', pane,
+                                 '\t'.join('#{%s}' % f for f in FIELDS)).rstrip('\n').split('\t')))
+
+
+def cursor_moved(pane, before, wait=0.3):
+    """Whether the cursor leaves (row, col) BEFORE within WAIT seconds."""
+    end = time.monotonic() + wait
+    while True:
+        info = read_info(pane)
+        if (int(info['cursor_y']), int(info['cursor_x'])) != before:
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.03)
+
+
+FIELDS = ['pane_in_mode', 'pane_width', 'pane_height', 'cursor_x', 'cursor_y',
+          'mouse_any_flag', 'mouse_sgr_flag']
+
+
+def main(pane, client):
+    if tmux('display-message', '-p', '-t', pane, '#{pane_in_mode}').strip() == '1':
+        tmux('send-keys', '-t', pane, '-X', 'cancel')
+    info = read_info(pane)
+    screen = tmux('capture-pane', '-p', '-t', pane).rstrip('\n')
+    lines = screen.split('\n')
+    first, last = reachable_rows(pane, info, lines)
+    with tempfile.TemporaryDirectory(prefix='tmux-jump-click.') as tmp:
+        screen_file, out_file = os.path.join(tmp, 'screen'), os.path.join(tmp, 'pick')
+        with open(screen_file, 'w', encoding='utf-8') as f:
+            f.write(screen)
+        cmd = ' '.join(shlex.quote(str(a)) for a in
+                       [sys.executable, os.path.abspath(__file__), '--pick', screen_file,
+                        first, last, out_file])
+        subprocess.run(['tmux', 'display-popup', '-c', client, '-t', pane, '-E', '-B',
+                        '-x', 'P', '-y', 'P', '-w', info['pane_width'],
+                        '-h', info['pane_height'], cmd])
+        if not os.path.exists(out_file):
+            return
+        with open(out_file) as f:
+            row, col = map(int, f.read().split())
+    if not first <= row <= last:
+        copy_mode_jump(pane, lines, row, col)
+        return
+    cursor = (int(info['cursor_y']), int(info['cursor_x']))
+    if info['mouse_any_flag'] == '1' and cursor != (row, col):
+        click(pane, info, row, col)
+        if cursor_moved(pane, cursor):
+            return
+    if not move_cursor(pane, info, row, col):
+        copy_mode_jump(pane, lines, row, col)
+
+
+if __name__ == '__main__':
+    if sys.argv[1:2] == ['--pick']:
+        pick(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5])
+    else:
+        main(sys.argv[1], sys.argv[2])
