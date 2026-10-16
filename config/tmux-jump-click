@@ -26,9 +26,12 @@
 # view (scrolled back or not) gets a label, and the pick moves the selection's
 # end.
 #
-#   tmux-jump-click --pick SCREEN FIRST LAST CY CX OUT   (internal) the popup's
-#       side: read the keys, write "row col" of the pick to OUT; FIRST to LAST
-#       are the rows the cursor can reach, (CY, CX) the cursor
+#   tmux-jump-click bind   bind the key in the @jump-click-key option (default
+#       C-j) after the prefix; run it from tmux.conf after setting the option
+#   tmux-jump-click --pick SCREEN FIRST LAST CY CX MY MX OUT   (internal) the
+#       popup's side: read the keys, write "row col" of the pick to OUT; FIRST
+#       to LAST are the rows the cursor can reach, (CY, CX) the cursor, (MY, MX)
+#       the cell to mark, -1 -1 for none
 import os
 import shlex
 import subprocess
@@ -46,6 +49,8 @@ BRIGHT = '\x1b[0m'
 RULE_CHARS = '─━═'
 LABEL = '\x1b[0;1;38;5;231;48;5;160m'
 COPY_LABEL = '\x1b[0;1;38;5;231;48;5;25m'
+MARK = '\x1b[0;30;43m'                  # the start of a copy-mode selection
+KEY_OPTION, KEY_DEFAULT = '@jump-click-key', 'C-j'
 
 
 def tmux(*args):
@@ -102,10 +107,11 @@ def labels_for(n, keys=LABEL_KEYS):
     return sorted(out, key=len)          # past len(keys)**2, some run to three
 
 
-def draw(screen, width, first, last, labelled=()):
+def draw(screen, width, first, last, labelled=(), mark=None):
     """Paint the captured screen, rows FIRST to LAST bright and the rest faint
-    (all dimmed when that is every row), with each (row, col, label) on top:
-    red where the cursor can go, blue for copy mode."""
+    (all dimmed when that is every row), the cell at MARK (row, col) marked,
+    with each (row, col, label) on top: red where the cursor can go, blue for
+    copy mode."""
     whole = last < first or (first == 0 and last >= len(screen) - 1)
     buf = ['\x1b[?25l\x1b[2J']
     for row, line in enumerate(screen):
@@ -114,6 +120,10 @@ def draw(screen, width, first, last, labelled=()):
         for col, ch in cells(line):
             if col + cell_width(ch) <= width:
                 buf.append(ch)
+    if mark and 0 <= mark[0] < len(screen):
+        line = screen[mark[0]]
+        ch = next((c for col, c in cells(line) if col == mark[1]), ' ')
+        buf.append(f'\x1b[{mark[0] + 1};{mark[1] + 1}H{MARK}{ch}')
     for row, col, label in labelled:
         style = LABEL if first <= row <= last else COPY_LABEL
         buf.append(f'\x1b[{row + 1};{col + 1}H{style}{label}')
@@ -127,7 +137,7 @@ def ordered(places, first, last, cy, cx):
                                          abs(p[0] - cy), abs(p[1] - cx), p))
 
 
-def pick(screen_file, first, last, cy, cx, out_file):
+def pick(screen_file, first, last, cy, cx, my, mx, out_file):
     with open(screen_file, encoding='utf-8') as f:
         screen = f.read().split('\n')
     width = os.get_terminal_size().columns
@@ -135,7 +145,7 @@ def pick(screen_file, first, last, cy, cx, out_file):
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
     try:
-        draw(screen, width, first, last)
+        draw(screen, width, first, last, mark=(my, mx))
         # Tells tests the popup is up and waiting for keys.
         open(os.path.join(os.path.dirname(out_file), 'ready'), 'w').close()
         key = os.read(fd, 8).decode('utf-8', 'replace')
@@ -146,7 +156,7 @@ def pick(screen_file, first, last, cy, cx, out_file):
         typed = ''
         while len(places) > 1:
             draw(screen, width, first, last, [(r, c, l[len(typed):])
-                                 for (r, c), l in zip(places, labels)])
+                                              for (r, c), l in zip(places, labels)], (my, mx))
             k = os.read(fd, 8).decode('utf-8', 'replace')
             typed += k
             kept = [(p, l) for p, l in zip(places, labels) if l.startswith(typed)]
@@ -280,10 +290,11 @@ def cursor_moved(pane, before, wait=0.3):
 
 FIELDS = ['pane_in_mode', 'pane_width', 'pane_height', 'cursor_x', 'cursor_y',
           'mouse_any_flag', 'mouse_sgr_flag', 'selection_active', 'scroll_position',
-          'copy_cursor_x', 'copy_cursor_y']
+          'copy_cursor_x', 'copy_cursor_y', 'history_size',
+          'selection_start_x', 'selection_start_y']
 
 
-def choose(pane, client, info, screen, first, last, cy, cx):
+def choose(pane, client, info, screen, first, last, cy, cx, mark=(-1, -1)):
     """(row, col) picked in the popup over PANE showing SCREEN, or None."""
     with tempfile.TemporaryDirectory(prefix='tmux-jump-click.') as tmp:
         screen_file, out_file = os.path.join(tmp, 'screen'), os.path.join(tmp, 'pick')
@@ -291,7 +302,7 @@ def choose(pane, client, info, screen, first, last, cy, cx):
             f.write(screen)
         cmd = ' '.join(shlex.quote(str(a)) for a in
                        [sys.executable, os.path.abspath(__file__), '--pick', screen_file,
-                        first, last, cy, cx, out_file])
+                        first, last, cy, cx, *mark, out_file])
         subprocess.run(['tmux', 'display-popup', '-c', client, '-t', pane, '-E', '-B',
                         '-x', 'P', '-y', 'P', '-w', info['pane_width'],
                         '-h', info['pane_height'], cmd])
@@ -309,8 +320,10 @@ def main(pane, client):
         scroll, height = int(info['scroll_position']), int(info['pane_height'])
         screen = tmux('capture-pane', '-p', '-t', pane, '-S', str(-scroll),
                       '-E', str(height - 1 - scroll)).rstrip('\n')
+        top = int(info['history_size']) - scroll
+        start = (int(info['selection_start_y']) - top, int(info['selection_start_x']))
         picked = choose(pane, client, info, screen, 0, -1,
-                        info['copy_cursor_y'], info['copy_cursor_x'])
+                        info['copy_cursor_y'], info['copy_cursor_x'], start)
         if picked:
             copy_mode_jump(pane, screen.split('\n'), *picked)
         return
@@ -336,8 +349,22 @@ def main(pane, client):
         copy_mode_jump(pane, lines, row, col)
 
 
+def bind():
+    """Bind the key in the @jump-click-key option (default C-j) after the
+    prefix, and unbind the one bound before if it changed."""
+    key = tmux('show-options', '-gqv', KEY_OPTION).strip() or KEY_DEFAULT
+    old = tmux('show-options', '-gqv', '@jump-click-bound-key').strip()
+    tmux('bind-key', key, 'run-shell', '-b',
+         f"{os.path.abspath(__file__)} '#{{pane_id}}' '#{{client_name}}'")
+    if old and old != key:
+        subprocess.run(['tmux', 'unbind-key', old], stderr=subprocess.DEVNULL)
+    tmux('set-option', '-g', '@jump-click-bound-key', key)
+
+
 if __name__ == '__main__':
     if sys.argv[1:2] == ['--pick']:
-        pick(sys.argv[2], *map(int, sys.argv[3:7]), sys.argv[7])
+        pick(sys.argv[2], *map(int, sys.argv[3:9]), sys.argv[9])
+    elif sys.argv[1:] == ['bind']:
+        bind()
     else:
         main(sys.argv[1], sys.argv[2])

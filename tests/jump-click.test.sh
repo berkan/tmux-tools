@@ -238,6 +238,24 @@ expect "the selection runs from its start to the pick, in copy mode, no click" \
     "1 alpha beta gamma
 bravo d " "$(inner display -p -t "$PANE" '#{pane_in_mode}') $(copied) $(recorded)"
 
+recorder sgr 'alpha beta gamma' 'bravo delta'
+inner copy-mode -t "$PANE"
+inner send-keys -t "$PANE" -X top-line
+inner send-keys -t "$PANE" -X start-of-line
+inner send-keys -t "$PANE" -X -N 6 cursor-right
+inner send-keys -t "$PANE" -X begin-selection
+inner send-keys -t "$PANE" -X cursor-down
+rm -rf "$SCRATCH/tmp" && mkdir "$SCRATCH/tmp"
+TMUX="$SOCKET,0,0" TMPDIR="$SCRATCH/tmp" python3 "$CLICK" "$PANE" "$CLIENT" &
+pid=$!
+for _ in $(seq 50); do compgen -G "$SCRATCH/tmp/tmux-jump-click.*/ready" >/dev/null && break; sleep 0.1; done
+row0=$(tmux -L "$OUTER" capture-pane -ep | head -1)
+tmux -L "$OUTER" send-keys Escape
+wait "$pid" 2>/dev/null || true
+expect "the selection's start is marked: black on yellow" yes \
+    "$(python3 -c 'import re,sys; print("yes" if re.search(r"\x1b\[[0-9;]*43[0-9;]*m(\x1b\[[0-9;]*m)*b", sys.argv[1]) else "no: " + repr(sys.argv[1]))' "$row0")"
+inner send-keys -t "$PANE" -X cancel
+
 recorder sgr $(printf 'row%02d ' $(seq 1 30))
 inner copy-mode -t "$PANE"
 inner send-keys -t "$PANE" -X -N 12 scroll-up
@@ -249,6 +267,16 @@ pick r s
 expect "  ... from the scrolled-back view" "$top
 ${top:0:1}" "$(copied)"
 inner send-keys -t "$PANE" -X cancel
+
+echo "keys"
+inner set -g @jump-click-key M-j
+TMUX="$SOCKET,0,0" python3 "$CLICK" bind
+expect "bind uses the configured key" 1 \
+    "$(inner list-keys -T prefix | grep -cE "prefix +M-j +run-shell .*tmux-jump-click '#\{pane_id\}' '#\{client_name\}'")"
+inner set -gu @jump-click-key
+TMUX="$SOCKET,0,0" python3 "$CLICK" bind
+expect "the default key is C-j, and the old key is unbound" "1 0" \
+    "$(inner list-keys -T prefix | grep -cE "prefix +C-j +run-shell .*tmux-jump-click") $(inner list-keys -T prefix | grep -cE "prefix +M-j ")"
 
 echo "other programs get arrow keys within the cursor's line"
 # bash: type a line, move along it with tmux-jump-click, then insert X and run it.
