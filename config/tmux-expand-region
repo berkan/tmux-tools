@@ -2,13 +2,23 @@
 # tmux-expand-region expand|shrink PANE — grow the copy-mode selection in PANE
 # to the next larger region around the cursor, or shrink it back, like Emacs'
 # expand-region and expreg: every region that holds the cursor is found, and
-# the smallest that is larger than the selection is chosen. The regions, from
-# the view as shown: the word, the word with its punctuation (src/app.py:42),
-# inside and with quotes, inside and with brackets (across rows), the line,
-# the rows indented under it, the bullet or line heading them, the paragraph,
-# the whole view. Shrink retraces the steps, then clears the selection; once
-# the selection is changed by hand, shrinking just clears it.
+# the smallest that is larger than the selection is chosen. From whitespace,
+# the first region is the next word's. Shrink retraces the steps, then clears
+# the selection; once the selection is changed by hand, shrinking just clears
+# it.
 #
+# Regions come from rules: the defaults below (DEFAULT_RULES), then the file
+# named by the @expand-region-rules option (default
+# ~/.config/tmux-expand-region/rules), in the same form, one rule a line:
+#   NAME  regex  PATTERN    each match is a region, and so is each named group
+#                           in it: (?P<path>...)(?::\d+)? gives path and path:line
+#   NAME  builtin           one of the BUILTINS below, for what a regex cannot
+#                           match: pairs of brackets, rows, sentences
+#   -NAME                   drop the rule called NAME
+# A rule with a NAME already in use replaces it. Patterns are Python regexes
+# over the view's text, rows joined by newlines.
+#
+# tmux-expand-region rules — print the rules in effect.
 # tmux-expand-region bind — bind the keys in copy-mode-vi and copy-mode: the
 # @expand-region-expand-key option (default =) and @expand-region-shrink-key
 # (default -). Run it from tmux.conf after setting them.
@@ -19,8 +29,29 @@ import sys
 import unicodedata
 
 OPENERS, CLOSERS = '([{', ')]}'
-QUOTES = '"\'`'
-LEAD, TRAIL = '([{<"\'`', ')]}>"\'`,.;:!?'
+RULES_FILE = '~/.config/tmux-expand-region/rules'
+DEFAULT_RULES = r"""
+word       regex    [^\W_]+
+symbol     regex    \w(?:[\w-]*\w)?
+prefixed   regex    (?<![\w-])(?:--?|[$@#%])\w(?:[\w-]*\w)?
+chain      builtin
+call       builtin
+path       regex    (?P<path>(?<![\w/.~-])(?:~|\.{1,2})?/?(?:[\w@%+=~.-]+/)+[\w@%+=~.-]*[\w@%+=~-]|(?<![\w/.~-])[\w@%+=~-]+\.[A-Za-z0-9]{1,8}(?![\w/]))(?::\d+){0,2}
+url        regex    [A-Za-z][\w+.-]*://[^\s<>"'`]*[^\s<>"'`.,;:!?)\]}]
+email      regex    [\w.+-]+@[\w-]+(?:\.[\w-]+)+
+dquote     regex    "(?P<inside>(?:[^"\\\n]|\\.)*)"
+squote     regex    (?<!\w)'(?P<inside>(?:[^'\\\n]|\\.)*)'(?!\w)
+backquote  regex    `(?P<inside>[^`\n]*)`
+pairs      builtin
+comment    regex    (?m)^[ \t]*(#|//|--|;+)(?:[ \t].*)?(?:\n[ \t]*\1(?:[ \t].*)?)*
+sentence   builtin
+line       builtin
+block      builtin
+paragraph  builtin
+view       builtin
+"""
+# The quote rules, for telling which brackets are inside strings.
+STRINGS = re.compile(r'"(?:[^"\\\n]|\\.)*"|(?<!\w)\'(?:[^\'\\\n]|\\.)*\'(?!\w)|`[^`\n]*`')
 KEYS = {'expand': ('@expand-region-expand-key', '='),
         'shrink': ('@expand-region-shrink-key', '-')}
 
@@ -85,83 +116,165 @@ class View:
         return self.trimmed(self.starts[first], self.starts[last] + len(self.lines[last]) - 1)
 
 
-def unmatched(run, ch):
-    """Whether bracket CH has no partner in RUN; other characters always do
-    not: quotes and the punctuation that ends a sentence."""
-    pairs = dict(zip(OPENERS + CLOSERS, CLOSERS + OPENERS))
-    if ch not in pairs:
-        return True
-    opens = ch if ch in OPENERS else pairs[ch]
-    closes = pairs[opens]
-    more = run.count(opens) - run.count(closes)
-    return more > 0 if ch == opens else more < 0
-
-
 def indent(line):
     return len(line) - len(line.lstrip())
 
 
-def regions(view, p):
-    """Every (start, end) region, inclusive, that holds offset P."""
-    text, found = view.text, []
-    for m in re.finditer(r'\w+', text):
-        if m.start() <= p < m.end():
-            found.append((m.start(), m.end() - 1))
-    # The run of non-space around P without the punctuation that ends a
-    # sentence or wraps it: (src/app.py:42, gives src/app.py:42.
-    for m in re.finditer(r'\S+', text):
-        if m.start() <= p < m.end():
-            s, e = m.start(), m.end() - 1
-            while s < e and text[s] in LEAD and unmatched(text[s:e + 1], text[s]):
-                s += 1
-            while e > s and text[e] in TRAIL and unmatched(text[s:e + 1], text[e]):
-                e -= 1
-            found.append((s, e))
-    row, _ = view.position(p)
-    line_start = view.starts[row]
-    line = view.lines[row]
-    i = p - line_start
-    for q in QUOTES:
-        left = line.rfind(q, 0, i)
-        right = line.find(q, i + 1)
-        if left >= 0 and right >= 0:
-            inner = view.trimmed(line_start + left + 1, line_start + right - 1)
-            found += [inner, (line_start + left, line_start + right)]
-    stack = []
+def pairs_in(text, p):
+    """(open, close) of each bracket pair, skipping brackets inside strings
+    other than one that holds P."""
+    masked = [m.span() for m in STRINGS.finditer(text) if not m.start() <= p < m.end()]
+    inside = bytearray(len(text))
+    for a, b in masked:
+        inside[a:b] = b'\1' * (b - a)
+    stack, found = [], []
     for k, ch in enumerate(text):
+        if inside[k]:
+            continue
         if ch in OPENERS:
             stack.append(k)
         elif ch in CLOSERS and stack and text[stack[-1]] == OPENERS[CLOSERS.index(ch)]:
-            o = stack.pop()
-            if o <= p <= k:
-                if o < p < k:
-                    found.append(view.trimmed(o + 1, k - 1))
-                found.append((o, k))
+            found.append((stack.pop(), k))
+    return found
+
+
+NAME = re.compile(r'\w+(?:(?:\.|::|->)\w+)*')       # f, re.finditer, a::b->c
+CHAIN = re.compile(r'\w+(?:(?:\.|::|->)\w+)+')      # at least two members
+
+
+def builtin_pairs(view, p):
+    for o, c in pairs_in(view.text, p):
+        if o <= p <= c:
+            if o < p < c:
+                yield o + 1, c - 1
+            yield o, c
+
+
+def builtin_chain(view, p):
+    """The accessor chain from its start to each member at or after P's:
+    re.finditer, a.b.c."""
+    for m in CHAIN.finditer(view.text):
+        if m.start() <= p < m.end():
+            for end in re.finditer(r'\w+', m.group()):
+                if m.start() + end.end() > p:
+                    yield m.start(), m.start() + end.end() - 1
+
+
+def builtin_call(view, p):
+    """A name or accessor chain and the brackets right after it: f(x)."""
+    closing = dict(pairs_in(view.text, p))
+    for m in NAME.finditer(view.text):
+        if m.end() in closing:
+            yield m.start(), closing[m.end()]
+
+
+def rows_of(view, row):
+    """(first, last) of the paragraph around ROW: rows between blank rows."""
     lines = view.lines
-    if line.strip():
-        found.append(view.rows(row, row))
-        first = last = row
-        while first > 0 and lines[first - 1].strip() and indent(lines[first - 1]) >= indent(line):
-            first -= 1
-        while last + 1 < len(lines) and lines[last + 1].strip() and indent(lines[last + 1]) >= indent(line):
-            last += 1
-        found.append(view.rows(first, last))
-        # The rows heading this block: each less indented line above, with
-        # everything indented under it.
-        while first > 0 and lines[first - 1].strip() and indent(lines[first - 1]) < indent(lines[first]):
-            first -= 1
-            end = first
-            while end + 1 < len(lines) and lines[end + 1].strip() and indent(lines[end + 1]) > indent(lines[first]):
-                end += 1
-            found.append(view.rows(first, max(end, last)))
-        first = last = row
-        while first > 0 and lines[first - 1].strip():
-            first -= 1
-        while last + 1 < len(lines) and lines[last + 1].strip():
-            last += 1
-        found.append(view.rows(first, last))
-    found.append(view.trimmed(0, len(text) - 1))
-    return {r for r in found if r}
+    first = last = row
+    while first > 0 and lines[first - 1].strip():
+        first -= 1
+    while last + 1 < len(lines) and lines[last + 1].strip():
+        last += 1
+    return first, last
+
+
+def builtin_sentence(view, p):
+    """The sentence in the paragraph around P: up to . ! or ? before a space."""
+    row, _ = view.position(p)
+    if not view.lines[row].strip():
+        return
+    first, last = rows_of(view, row)
+    start = view.starts[first]
+    text = view.text[start:view.starts[last] + len(view.lines[last])]
+    for m in re.finditer(r'\S.*?(?:[.!?](?=\s)|[.!?]?$)', text, re.S):
+        yield start + m.start(), start + m.end() - 1
+
+
+def builtin_line(view, p):
+    row, _ = view.position(p)
+    yield view.rows(row, row)
+
+
+def builtin_block(view, p):
+    """The rows indented at least as far as P's, then each less indented line
+    above, with everything indented under it (a bullet and its text)."""
+    row, _ = view.position(p)
+    lines, line = view.lines, view.lines[row]
+    if not line.strip():
+        return
+    first = last = row
+    while first > 0 and lines[first - 1].strip() and indent(lines[first - 1]) >= indent(line):
+        first -= 1
+    while last + 1 < len(lines) and lines[last + 1].strip() and indent(lines[last + 1]) >= indent(line):
+        last += 1
+    yield view.rows(first, last)
+    while first > 0 and lines[first - 1].strip() and indent(lines[first - 1]) < indent(lines[first]):
+        first -= 1
+        end = first
+        while end + 1 < len(lines) and lines[end + 1].strip() and indent(lines[end + 1]) > indent(lines[first]):
+            end += 1
+        yield view.rows(first, max(end, last))
+
+
+def builtin_paragraph(view, p):
+    row, _ = view.position(p)
+    if view.lines[row].strip():
+        yield view.rows(*rows_of(view, row))
+
+
+def builtin_view(view, p):
+    yield 0, len(view.text) - 1
+
+
+BUILTINS = {name[len('builtin_'):]: f for name, f in globals().items()
+            if name.startswith('builtin_')}
+
+
+def load_rules():
+    """[(name, kind, pattern)] from DEFAULT_RULES and the rules file; a
+    message for each line that is not a rule."""
+    rules, problems = {}, []
+    path = os.path.expanduser(tmux('show-options', '-gqv', '@expand-region-rules', check=False).strip()
+                              or RULES_FILE)
+    sources = [('defaults', DEFAULT_RULES)]
+    if os.path.exists(path):
+        with open(path, encoding='utf-8') as f:
+            sources.append((path, f.read()))
+    for source, text in sources:
+        for n, line in enumerate(text.split('\n'), 1):
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith('-'):
+                rules.pop(line[1:].strip(), None)
+                continue
+            parts = line.split(None, 2)
+            name, kind = parts[0], parts[1] if len(parts) > 1 else ''
+            try:
+                if kind == 'builtin' and name in BUILTINS:
+                    rules[name] = (kind, None)
+                elif kind == 'regex' and len(parts) == 3:
+                    rules[name] = (kind, re.compile(parts[2]))
+                else:
+                    raise ValueError('not "NAME regex PATTERN", "NAME builtin" or "-NAME"')
+            except (re.error, ValueError) as e:
+                problems.append(f'{source}:{n}: {e}')
+    return [(name, kind, pattern) for name, (kind, pattern) in rules.items()], problems
+
+
+def regions(view, p, rules):
+    """Every (start, end) region, inclusive, that holds offset P."""
+    found = []
+    for name, kind, pattern in rules:
+        if kind == 'builtin':
+            found += BUILTINS[name](view, p)
+            continue
+        for m in pattern.finditer(view.text):
+            spans = [m.span()] + [m.span(g) for g in pattern.groupindex]
+            found += [(a, b - 1) for a, b in spans if a <= p < b]
+    trimmed = (view.trimmed(*r) for r in found if r and r[0] <= r[1])
+    return {r for r in trimmed if r and r[0] <= p <= r[1]}
 
 
 FIELDS = ['pane_in_mode', 'scroll_position', 'history_size', 'pane_height',
@@ -229,12 +342,16 @@ def main(action, pane):
         stack = [here]
 
     if action == 'expand':
+        rules, problems = load_rules()
+        if problems:
+            tmux('display-message', '-t', pane, 'tmux-expand-region: ' + '; '.join(problems))
         if current is None:
             p = view.offset(cy, cx)
-            bigger = [r for r in regions(view, p)]
+            while p < len(view.text) - 1 and view.text[p].isspace():
+                p += 1                       # from whitespace, the next word
+            bigger = regions(view, p, rules)
         else:
-            p = current[0]
-            bigger = [r for r in regions(view, p) | regions(view, current[1])
+            bigger = [r for r in regions(view, current[0], rules) | regions(view, current[1], rules)
                       if r[0] <= current[0] and r[1] >= current[1] and r != current]
         if not bigger:
             return
@@ -291,5 +408,11 @@ def bind():
 if __name__ == '__main__':
     if sys.argv[1:] == ['bind']:
         bind()
+    elif sys.argv[1:] == ['rules']:
+        rules, problems = load_rules()
+        for name, kind, pattern in rules:
+            print(f'{name:<11}{kind:<9}{pattern.pattern if pattern else ""}'.rstrip())
+        for problem in problems:
+            print(problem, file=sys.stderr)
     else:
         main(sys.argv[1], sys.argv[2])

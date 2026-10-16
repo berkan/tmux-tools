@@ -64,9 +64,9 @@ steps() {
 echo "expanding"
 show 'see (src/app.py:42, "quoted text") here'
 at 0 9
-expect "word, symbol, brackets, line" \
-    'app|src/app.py:42|src/app.py:42, "quoted text"|(src/app.py:42, "quoted text")|see (src/app.py:42, "quoted text") here' \
-    "$(steps expand expand expand expand expand)"
+expect "word, accessor, path, path:line, brackets" \
+    'app|app.py|src/app.py|src/app.py:42|src/app.py:42, "quoted text"|(src/app.py:42, "quoted text")' \
+    "$(steps expand expand expand expand expand expand)"
 
 show 'see (src/app.py:42, "quoted text") here'
 at 0 21
@@ -76,12 +76,12 @@ expect "quotes, inside then with" \
 
 show 'if m.start() <= p: (see f(x)).'
 at 0 6
-expect "brackets that open in the word stay; ones that wrap it go" \
-    'start|m.start()' "$(steps expand expand)"
+expect "a method call: the accessor chain, then its arguments" \
+    'start|m.start|m.start()' "$(steps expand expand expand)"
 t send -t "$PANE" -X cancel
 t copy-mode -t "$PANE"
 at 0 24
-expect "  ... and around a sentence" 'f|f(x)' "$(steps expand expand)"
+expect "  ... and a call in brackets" 'f|f(x)' "$(steps expand expand)"
 
 show 'call(' '    first,' '    second)' 'after'
 at 1 5
@@ -106,11 +106,69 @@ t send -t "$PANE" -X begin-selection
 t send -t "$PANE" -X -N 3 cursor-left
 expect "a selection made by hand grows from itself" 'alpha beta gamma' "$(steps expand)"
 
+# first REGION ROW COL TEXT... — the first N steps from (ROW, COL) of TEXT.
+first() {
+    local n=$1 row=$2 col=$3; shift 3
+    show "$@"
+    at "$row" "$col"
+    local actions=() i
+    for i in $(seq "$n"); do actions+=(expand); done
+    steps "${actions[@]}"
+}
+# reaches REGION ROW COL TEXT... — whether expanding from (ROW, COL) ever
+# selects exactly REGION.
+reaches() {
+    local want=$1; shift
+    local all got
+    all=$(first 8 "$@")
+    local IFS='|'
+    for got in $all; do [ "$got" = "$want" ] && { echo yes; return; }; done
+    echo no
+}
+
+expect "a word stops at _ and -, a symbol does not" 'bar|foo_bar-baz' \
+    "$(first 2 0 4 'foo_bar-baz qux')"
+expect "a symbol with its prefix: \$HOME" 'HOME|$HOME' "$(first 2 0 6 'echo $HOME and --yolo')"
+expect "  ... and --yolo" 'yolo|--yolo' "$(first 2 0 18 'echo $HOME and --yolo')"
+expect "a call through an accessor chain" 're|re.finditer|re.finditer(r"\S+", text)' \
+    "$(first 3 0 4 'x = re.finditer(r"\S+", text)')"
+expect "a path" yes "$(reaches '~/dev/ppi/config' 0 12 'cd ~/dev/ppi/config, then')"
+expect "a path with a line and column" yes "$(reaches 'lib/run.sh:12:3' 0 7 'at lib/run.sh:12:3.')"
+expect "a URL of any scheme" yes "$(reaches 'sess://claude/abc-123?at=4' 0 15 'open sess://claude/abc-123?at=4, then')"
+expect "an https URL without the sentence's full stop" yes \
+    "$(reaches 'https://emacsredux.com/blog/x/' 0 20 'see https://emacsredux.com/blog/x/.')"
+expect "an email address" yes "$(reaches 'bob.smith@example.com' 0 16 'mail bob.smith@example.com now')"
+expect "an apostrophe does not open a quote" "x|x y|'x y'" "$(first 3 0 7 "don't 'x y' ok")"
+expect "an escaped quote stays inside the string" 'a|a \"b\" c|"a \"b\" c"' \
+    "$(first 3 0 5 'say "a \"b\" c" end')"
+expect "a bracket inside a string does not pair" 'x|"(", x|("(", x)|f("(", x)' \
+    "$(first 4 0 7 'f("(", x)')"
+expect "a comment block" yes "$(reaches '# one
+# two' 0 2 '# one' '# two' 'code')"
+expect "a sentence" yes "$(reaches 'Second here, more.' 0 18 'First one. Second here, more. Third.')"
+expect "from whitespace, the next word" 'beta' "$(first 1 0 6 'alpha   beta')"
+
+echo "rules file"
+cat > "$SCRATCH/rules" <<'EOF'
+# drop a default, add two
+-word
+pid   regex  \d+
+kv    regex  (?P<key>\w+)=(?P<val>\w+)
+EOF
+t set -g @expand-region-rules "$SCRATCH/rules"
+expect "a dropped default is not used" 'foo_bar' "$(first 1 0 4 'foo_bar')"
+expect "a regex rule of its own" '12345' "$(first 1 0 6 'pid 12345 up')"
+expect "named groups are regions too" 'val|key=val' "$(first 2 0 8 'a key=val b')"
+rules=$(TMUX="$SOCKET,0,0" python3 "$EXPAND" rules)
+expect "rules lists what is in effect" "kv pid no-word" \
+    "$(grep -qw kv <<<"$rules" && echo -n 'kv '; grep -qw pid <<<"$rules" && echo -n 'pid '; grep -qE '^word ' <<<"$rules" || echo -n no-word)"
+t set -gu @expand-region-rules
+
 echo "shrinking"
 show 'see (src/app.py:42, "quoted text") here'
 at 0 9
 expect "shrink retraces the steps, then clears" \
-    'app|src/app.py:42|src/app.py:42, "quoted text"|src/app.py:42|app|' \
+    'app|app.py|src/app.py|app.py|app|' \
     "$(steps expand expand expand shrink shrink shrink)"
 
 show 'alpha beta gamma'
