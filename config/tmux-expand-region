@@ -1,0 +1,295 @@
+#!/usr/bin/env python3
+# tmux-expand-region expand|shrink PANE — grow the copy-mode selection in PANE
+# to the next larger region around the cursor, or shrink it back, like Emacs'
+# expand-region and expreg: every region that holds the cursor is found, and
+# the smallest that is larger than the selection is chosen. The regions, from
+# the view as shown: the word, the word with its punctuation (src/app.py:42),
+# inside and with quotes, inside and with brackets (across rows), the line,
+# the rows indented under it, the bullet or line heading them, the paragraph,
+# the whole view. Shrink retraces the steps, then clears the selection; once
+# the selection is changed by hand, shrinking just clears it.
+#
+# tmux-expand-region bind — bind the keys in copy-mode-vi and copy-mode: the
+# @expand-region-expand-key option (default =) and @expand-region-shrink-key
+# (default -). Run it from tmux.conf after setting them.
+import os
+import re
+import subprocess
+import sys
+import unicodedata
+
+OPENERS, CLOSERS = '([{', ')]}'
+QUOTES = '"\'`'
+LEAD, TRAIL = '([{<"\'`', ')]}>"\'`,.;:!?'
+KEYS = {'expand': ('@expand-region-expand-key', '='),
+        'shrink': ('@expand-region-shrink-key', '-')}
+
+
+def tmux(*args, check=True):
+    return subprocess.run(['tmux', *args], check=check, text=True,
+                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+
+
+def cell_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in 'WF' else 1
+
+
+def column(line, i):
+    """Screen column of character I of LINE; past the end, one per character."""
+    col = sum(cell_width(ch) for ch in line[:i])
+    return col + max(0, i - len(line))
+
+
+def char_at(line, col):
+    """Index of the character at screen column COL of LINE."""
+    c = 0
+    for i, ch in enumerate(line):
+        if c + cell_width(ch) > col:
+            return i
+        c += cell_width(ch)
+    return len(line) + col - c
+
+
+class View:
+    """The rows on screen as one text, positions as offsets into it."""
+
+    def __init__(self, lines):
+        self.lines = lines
+        self.text = '\n'.join(lines)
+        self.starts = []
+        at = 0
+        for line in lines:
+            self.starts.append(at)
+            at += len(line) + 1
+
+    def offset(self, row, col):
+        line = self.lines[row]
+        return self.starts[row] + min(char_at(line, col), max(len(line) - 1, 0))
+
+    def position(self, offset):
+        """(row, col) of OFFSET."""
+        row = max(r for r, s in enumerate(self.starts) if s <= offset)
+        return row, column(self.lines[row], offset - self.starts[row])
+
+    def trimmed(self, start, end):
+        """START..END without whitespace at either end, or None if empty."""
+        while start <= end and self.text[start].isspace():
+            start += 1
+        while end >= start and self.text[end].isspace():
+            end -= 1
+        return (start, end) if start <= end else None
+
+    def rows(self, first, last):
+        return self.trimmed(self.starts[first], self.starts[last] + len(self.lines[last]) - 1)
+
+
+def unmatched(run, ch):
+    """Whether bracket CH has no partner in RUN; other characters always do
+    not: quotes and the punctuation that ends a sentence."""
+    pairs = dict(zip(OPENERS + CLOSERS, CLOSERS + OPENERS))
+    if ch not in pairs:
+        return True
+    opens = ch if ch in OPENERS else pairs[ch]
+    closes = pairs[opens]
+    more = run.count(opens) - run.count(closes)
+    return more > 0 if ch == opens else more < 0
+
+
+def indent(line):
+    return len(line) - len(line.lstrip())
+
+
+def regions(view, p):
+    """Every (start, end) region, inclusive, that holds offset P."""
+    text, found = view.text, []
+    for m in re.finditer(r'\w+', text):
+        if m.start() <= p < m.end():
+            found.append((m.start(), m.end() - 1))
+    # The run of non-space around P without the punctuation that ends a
+    # sentence or wraps it: (src/app.py:42, gives src/app.py:42.
+    for m in re.finditer(r'\S+', text):
+        if m.start() <= p < m.end():
+            s, e = m.start(), m.end() - 1
+            while s < e and text[s] in LEAD and unmatched(text[s:e + 1], text[s]):
+                s += 1
+            while e > s and text[e] in TRAIL and unmatched(text[s:e + 1], text[e]):
+                e -= 1
+            found.append((s, e))
+    row, _ = view.position(p)
+    line_start = view.starts[row]
+    line = view.lines[row]
+    i = p - line_start
+    for q in QUOTES:
+        left = line.rfind(q, 0, i)
+        right = line.find(q, i + 1)
+        if left >= 0 and right >= 0:
+            inner = view.trimmed(line_start + left + 1, line_start + right - 1)
+            found += [inner, (line_start + left, line_start + right)]
+    stack = []
+    for k, ch in enumerate(text):
+        if ch in OPENERS:
+            stack.append(k)
+        elif ch in CLOSERS and stack and text[stack[-1]] == OPENERS[CLOSERS.index(ch)]:
+            o = stack.pop()
+            if o <= p <= k:
+                if o < p < k:
+                    found.append(view.trimmed(o + 1, k - 1))
+                found.append((o, k))
+    lines = view.lines
+    if line.strip():
+        found.append(view.rows(row, row))
+        first = last = row
+        while first > 0 and lines[first - 1].strip() and indent(lines[first - 1]) >= indent(line):
+            first -= 1
+        while last + 1 < len(lines) and lines[last + 1].strip() and indent(lines[last + 1]) >= indent(line):
+            last += 1
+        found.append(view.rows(first, last))
+        # The rows heading this block: each less indented line above, with
+        # everything indented under it.
+        while first > 0 and lines[first - 1].strip() and indent(lines[first - 1]) < indent(lines[first]):
+            first -= 1
+            end = first
+            while end + 1 < len(lines) and lines[end + 1].strip() and indent(lines[end + 1]) > indent(lines[first]):
+                end += 1
+            found.append(view.rows(first, max(end, last)))
+        first = last = row
+        while first > 0 and lines[first - 1].strip():
+            first -= 1
+        while last + 1 < len(lines) and lines[last + 1].strip():
+            last += 1
+        found.append(view.rows(first, last))
+    found.append(view.trimmed(0, len(text) - 1))
+    return {r for r in found if r}
+
+
+FIELDS = ['pane_in_mode', 'scroll_position', 'history_size', 'pane_height',
+          'copy_cursor_x', 'copy_cursor_y', 'selection_present',
+          'selection_start_x', 'selection_start_y', 'selection_end_x', 'selection_end_y']
+
+
+def read_info(pane):
+    values = tmux('display-message', '-p', '-t', pane,
+                  '\t'.join('#{%s}' % f for f in FIELDS)).rstrip('\n').split('\t')
+    return dict(zip(FIELDS, values))
+
+
+def move_to(pane, row, col, line):
+    """Copy-mode cursor to (ROW, COL) of the view. It moves by character and
+    does not always land where counted, so it is moved, read back and moved
+    again (as in tmux-jump-click)."""
+    for _ in range(4):
+        info = read_info(pane)
+        x, y = int(info['copy_cursor_x']), int(info['copy_cursor_y'])
+        if y != row:
+            count, cmd = row - y, 'cursor-down'
+        else:
+            count, cmd = char_at(line, col) - char_at(line, x), 'cursor-right'
+        if not count:
+            return
+        if count < 0:
+            count, cmd = -count, {'cursor-down': 'cursor-up', 'cursor-right': 'cursor-left'}[cmd]
+        tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
+
+
+def select(pane, view, region):
+    (r0, c0), (r1, c1) = view.position(region[0]), view.position(region[1])
+    tmux('send-keys', '-t', pane, '-X', 'clear-selection')
+    move_to(pane, r0, c0, view.lines[r0])
+    tmux('send-keys', '-t', pane, '-X', 'begin-selection')
+    move_to(pane, r1, c1, view.lines[r1])
+
+
+def main(action, pane):
+    info = read_info(pane)
+    if info['pane_in_mode'] != '1':
+        return
+    scroll, height = int(info['scroll_position']), int(info['pane_height'])
+    top = int(info['history_size']) - scroll        # history line of the view's row 0
+    lines = tmux('capture-pane', '-p', '-t', pane, '-S', str(-scroll),
+                 '-E', str(height - 1 - scroll)).split('\n')[:height]
+    view = View(lines + [''] * (height - len(lines)))
+    cy, cx = int(info['copy_cursor_y']), int(info['copy_cursor_x'])
+
+    def to_view(x, y):
+        return min(max(int(y) - top, 0), height - 1), int(x)
+
+    current = None
+    if info['selection_present'] == '1':
+        a = view.offset(*to_view(info['selection_start_x'], info['selection_start_y']))
+        b = view.offset(*to_view(info['selection_end_x'], info['selection_end_y']))
+        current = (min(a, b), max(a, b))
+    # The steps so far, as history lines so scrolling does not upset them:
+    # "point" or "start-end" entries, the last one the selection now shown.
+    here = (f'{top + cy}:{cx}' if current is None else
+            '%d:%d-%d:%d' % (*absolute(view, top, current[0]), *absolute(view, top, current[1])))
+    stack = tmux('show-options', '-pqv', '-t', pane, '@expand-region-stack').strip().split(';')
+    if not stack or stack[-1] != here:
+        stack = [here]
+
+    if action == 'expand':
+        if current is None:
+            p = view.offset(cy, cx)
+            bigger = [r for r in regions(view, p)]
+        else:
+            p = current[0]
+            bigger = [r for r in regions(view, p) | regions(view, current[1])
+                      if r[0] <= current[0] and r[1] >= current[1] and r != current]
+        if not bigger:
+            return
+        region = min(bigger, key=lambda r: (r[1] - r[0], r))
+        select(pane, view, region)
+        stack.append('%d:%d-%d:%d' % (*absolute(view, top, region[0]),
+                                      *absolute(view, top, region[1])))
+    else:
+        if len(stack) < 2:
+            tmux('send-keys', '-t', pane, '-X', 'clear-selection')
+            stack = []
+        else:
+            stack.pop()
+            back = stack[-1]
+            if '-' in back:
+                start, end = (from_absolute(view, top, s) for s in back.split('-'))
+                select(pane, view, (start, end))
+            else:
+                tmux('send-keys', '-t', pane, '-X', 'clear-selection')
+                row, col = map(int, back.split(':'))
+                if 0 <= row - top < height:
+                    move_to(pane, row - top, col, view.lines[row - top])
+                stack = []
+    tmux('set-option', '-p', '-t', pane, '@expand-region-stack', ';'.join(stack))
+
+
+def absolute(view, top, offset):
+    row, col = view.position(offset)
+    return top + row, col
+
+
+def from_absolute(view, top, spec):
+    row, col = map(int, spec.split(':'))
+    return view.offset(min(max(row - top, 0), len(view.lines) - 1), col)
+
+
+def bind():
+    script = os.path.abspath(__file__)
+    old = tmux('show-options', '-gqv', '@expand-region-bound-keys').split()
+    keys = []
+    for action, (option, default) in KEYS.items():
+        key = tmux('show-options', '-gqv', option).strip() or default
+        keys.append(key)
+        for table in ('copy-mode-vi', 'copy-mode'):
+            tmux('bind-key', '-T', table, key, 'run-shell',
+                 f"{script} {action} '#{{pane_id}}'")
+    for key in old:
+        if key not in keys:
+            for table in ('copy-mode-vi', 'copy-mode'):
+                tmux('unbind-key', '-T', table, key, check=False)
+    tmux('set-option', '-g', '@expand-region-bound-keys', ' '.join(keys))
+
+
+if __name__ == '__main__':
+    if sys.argv[1:] == ['bind']:
+        bind()
+    else:
+        main(sys.argv[1], sys.argv[2])
