@@ -110,18 +110,39 @@ pick() {
     sleep 0.2
 }
 
+echo "labels"
+# Labels never start another label, are unique, and get no shorter down the
+# list (nearest first); 30 places leave 25 one-key labels.
+expect "labels are prefix-free, shortest for the nearest" ok "$(python3 - "$CLICK" <<'EOF'
+import importlib.machinery as m, sys
+sys.dont_write_bytecode = True
+c = m.SourceFileLoader('c', sys.argv[1]).load_module()
+for n in range(1, 1001):
+    ls = c.labels_for(n)
+    assert len(ls) == n == len(set(ls)), n
+    assert not any(a != b and b.startswith(a) for a in ls for b in ls), n
+    assert [len(x) for x in ls] == sorted(len(x) for x in ls), n
+assert sum(len(x) == 1 for x in c.labels_for(30)) == 25
+print('ok')
+EOF
+)"
+
 echo "programs that ask for mouse events get a click"
 recorder sgr 'alpha beta gamma' 'bravo'
 pick g
 expect "a single match clicks at once (SGR)" "$(hex '\e[<0;12;1M\e[<0;12;1m')" "$(recorded)"
 
 recorder sgr 'alpha beta gamma' 'bravo'
-pick b s
-expect "the second label picks the second match" "$(hex '\e[<0;1;2M\e[<0;1;2m')" "$(recorded)"
+pick b a
+expect "the match nearest the cursor gets the first label" "$(hex '\e[<0;1;2M\e[<0;1;2m')" "$(recorded)"
 
 recorder sgr 'alpha beta gamma' 'bravo'
+pick b s
+expect "a farther match gets a later label" "$(hex '\e[<0;7;1M\e[<0;7;1m')" "$(recorded)"
+
+recorder sgr 'beta' '────────' '❯ a' '' '' '' 'beta' '────────' $'\e[3;3H'
 pick b a
-expect "the first label picks the first match" "$(hex '\e[<0;7;1M\e[<0;7;1m')" "$(recorded)"
+expect "the input box comes first, even when farther" "$(hex '\e[<0;1;7M\e[<0;1;7m')" "$(recorded)"
 
 recorder sgr 'xa-b alpha'
 pick a
@@ -140,7 +161,7 @@ pick g
 expect "legacy mouse encoding" "$(hex '\e[M ,!\e[M#,!')" "$(recorded)"
 
 recorder sgr 'beta above' '────────' '❯ alpha beta' '────────' 'beta below' $'\e[3;3H'
-pick b s
+pick b a
 expect "a place between rules around the cursor gets a click" \
     "$(hex '\e[<0;9;3M\e[<0;9;3m')" "$(recorded)"
 
@@ -160,15 +181,15 @@ expect "copy mode counts wide characters as two columns" "1 5,0" \
     "$(inner display -p -t "$PANE" '#{pane_in_mode} #{copy_cursor_x},#{copy_cursor_y}')"
 
 recorder sgr 'beta above' '── default ─────' 'alpha beta' '────────' 'beta below' $'\e[3;1H'
-pick b s
+pick b a
 expect "a rule may carry a title" "$(hex '\e[<0;7;3M\e[<0;7;3m')" "$(recorded)"
 
 recorder sgr 'beta' '────────' 'bravo'
-pick b s
+pick b a
 expect "a rule on one side only does not limit" "$(hex '\e[<0;1;3M\e[<0;1;3m')" "$(recorded)"
 
 recorder sgr 'beta above' '' '› alpha beta' '  bravo' '' 'beta footer' $'\e[3;3H'
-pick b d
+pick b s
 expect "without rules, the rows between blank rows around the cursor" \
     "$(hex '\e[<0;3;4M\e[<0;3;4m')" "$(recorded)"
 
@@ -220,10 +241,10 @@ inner send-keys -t "$PANE" Home
 pick g
 expect "Right keys reach the place" "alpha beta Xgamma" "$(ran)"
 
-bash_line "echo $(printf 'w%02d ' $(seq 1 30))"
-pick w a h
+bash_line "echo kappa $(printf 'w%02d ' $(seq 1 30))"
+pick k
 expect "wrapped rows count as one line" \
-    "w01 w02 w03 w04 w05 Xw06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20 w21 w22 w23 w24 w25 w26 w27 w28 w29 w30" \
+    "Xkappa w01 w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20 w21 w22 w23 w24 w25 w26 w27 w28 w29 w30" \
     "$(ran)"
 
 run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' bash --norc --noprofile"
@@ -236,7 +257,7 @@ pick b s
 expect "a place on another line is jumped to in copy mode" "1 0,1" \
     "$(inner display -p -t "$PANE" '#{pane_in_mode} #{copy_cursor_x},#{copy_cursor_y}')"
 inner send-keys -t "$PANE" -X cancel
-pick b d
+pick b a
 expect "a place on the cursor's line still gets arrow keys" "alpha Xbeta" \
     "$(inner send-keys -t "$PANE" X Enter; sleep 0.3; inner capture-pane -p -t "$PANE" | sed -n 4p)"
 

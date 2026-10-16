@@ -19,11 +19,13 @@
 # and otherwise the cursor's own line (wrapped rows included), since Up/Down
 # would walk a shell's history. If neither a click nor the keys get there after
 # all, the place is jumped to in copy mode.
+# Labels go to the places the cursor can reach first, then by distance from
+# the cursor; the nearest get one key, the rest two (or more).
 # Esc, or a key that matches nothing, cancels. The pane leaves copy mode first.
 #
-#   tmux-jump-click --pick SCREEN FIRST LAST OUT   (internal) the popup's
+#   tmux-jump-click --pick SCREEN FIRST LAST CY CX OUT   (internal) the popup's
 #       side: read the keys, write "row col" of the pick to OUT; FIRST to LAST
-#       are the rows the cursor can reach
+#       are the rows the cursor can reach, (CY, CX) the cursor
 import os
 import shlex
 import subprocess
@@ -80,14 +82,21 @@ def matches(screen, key):
     return found
 
 
-def labels_for(n):
-    size = 1
-    while len(LABEL_KEYS) ** size < n:
-        size += 1
-    out = ['']
-    for _ in range(size):
-        out = [p + k for p in out for k in LABEL_KEYS]
-    return out[:n]
+def labels_for(n, keys=LABEL_KEYS):
+    """N labels, shortest first, none the start of another: the first keys
+    stand alone and the last ones start longer labels, as few as fit N."""
+    if n <= len(keys):
+        return list(keys[:n])
+    for prefixes in range(1, len(keys) + 1):
+        if len(keys) - prefixes + prefixes * len(keys) >= n:
+            break
+    singles = len(keys) - prefixes
+    out, left = list(keys[:singles]), n - singles
+    for i, p in enumerate(keys[singles:]):
+        share = -(-left // (prefixes - i))         # spread evenly, rounding up
+        out += [p + rest for rest in labels_for(share, keys)]
+        left -= share
+    return sorted(out, key=len)          # past len(keys)**2, some run to three
 
 
 def draw(screen, width, first, last, labelled=()):
@@ -109,7 +118,13 @@ def draw(screen, width, first, last, labelled=()):
     sys.stdout.flush()
 
 
-def pick(screen_file, first, last, out_file):
+def ordered(places, first, last, cy, cx):
+    """Places the cursor can reach first, then nearest the cursor first."""
+    return sorted(places, key=lambda p: (not first <= p[0] <= last,
+                                         abs(p[0] - cy), abs(p[1] - cx), p))
+
+
+def pick(screen_file, first, last, cy, cx, out_file):
     with open(screen_file, encoding='utf-8') as f:
         screen = f.read().split('\n')
     width = os.get_terminal_size().columns
@@ -123,7 +138,7 @@ def pick(screen_file, first, last, out_file):
         key = os.read(fd, 8).decode('utf-8', 'replace')
         if len(key) != 1 or not key.isprintable():
             return
-        places = matches(screen, key)
+        places = ordered(matches(screen, key), first, last, cy, cx)
         labels = labels_for(len(places))
         typed = ''
         while len(places) > 1:
@@ -277,7 +292,7 @@ def main(pane, client):
             f.write(screen)
         cmd = ' '.join(shlex.quote(str(a)) for a in
                        [sys.executable, os.path.abspath(__file__), '--pick', screen_file,
-                        first, last, out_file])
+                        first, last, info['cursor_y'], info['cursor_x'], out_file])
         subprocess.run(['tmux', 'display-popup', '-c', client, '-t', pane, '-E', '-B',
                         '-x', 'P', '-y', 'P', '-w', info['pane_width'],
                         '-h', info['pane_height'], cmd])
@@ -299,6 +314,6 @@ def main(pane, client):
 
 if __name__ == '__main__':
     if sys.argv[1:2] == ['--pick']:
-        pick(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5])
+        pick(sys.argv[2], *map(int, sys.argv[3:7]), sys.argv[7])
     else:
         main(sys.argv[1], sys.argv[2])
