@@ -1,5 +1,5 @@
 #!/bin/sh
-# ppi-quote-reply [PANE] — paste 're: "<newest tmux buffer>" -- ' into PANE
+# tmux-quote-reply [PANE] — paste 're: "<newest tmux buffer>" -- ' into PANE
 # (default: the current pane), to quote part of an agent's response back to it.
 # It lands at the prompt's cursor: tmux cannot see an app's input, and keys
 # like End only reach the end of the current line in Claude Code and pi.
