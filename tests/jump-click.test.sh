@@ -75,6 +75,7 @@ tmux -L "$OUTER" -f /dev/null new-session -d -x 60 -y 12 \
     "env -u TMUX tmux -L $INNER -f /dev/null new-session -x 60 -y 11 'sleep 600'"
 for _ in $(seq 50); do inner has-session 2>/dev/null && break; sleep 0.1; done
 inner set -g status off
+inner set -g mode-keys vi                 # tmux default when $EDITOR is vi(m)
 inner set -s escape-time 0
 tmux -L "$OUTER" set -s escape-time 0
 PANE=$(inner display -p '#{pane_id}')
@@ -147,6 +148,11 @@ recorder sgr 'beta above' '────────' '❯ alpha beta' '───
 pick b d
 expect "a place outside them is jumped to in copy mode" "1 0,4 " \
     "$(inner display -p -t "$PANE" '#{pane_in_mode} #{copy_cursor_x},#{copy_cursor_y}') $(recorded)"
+
+recorder sgr '' '' 'alpha beta' '' '› x'
+pick b
+expect "copy mode lands right below empty top rows" "1 6,2" \
+    "$(inner display -p -t "$PANE" '#{pane_in_mode} #{copy_cursor_x},#{copy_cursor_y}')"
 
 recorder sgr '日本 gamma' '' '› alpha'
 pick g

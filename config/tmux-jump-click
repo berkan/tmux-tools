@@ -223,14 +223,24 @@ def move_cursor(pane, info, row, col):
 
 
 def copy_mode_jump(pane, screen, row, col):
-    """Copy mode with its cursor at (ROW, COL), which moves by character."""
+    """Copy mode with its cursor at (ROW, COL). The cursor moves by character,
+    and does not always land where counted (from an empty top line it goes a
+    row too far), so it is moved, checked and moved again."""
     tmux('copy-mode', '-t', pane)
     for cmd in ['top-line', 'start-of-line']:
         tmux('send-keys', '-t', pane, '-X', cmd)
-    chars = char_index(screen[row], col)
-    for count, cmd in [(row, 'cursor-down'), (chars, 'cursor-right')]:
-        if count:
-            tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
+    for _ in range(4):
+        x, y = map(int, tmux('display-message', '-p', '-t', pane,
+                             '#{copy_cursor_x} #{copy_cursor_y}').split())
+        if y != row:
+            count, cmd = row - y, 'cursor-down'
+        else:
+            count, cmd = char_index(screen[row], col) - char_index(screen[row], x), 'cursor-right'
+        if not count:
+            return
+        if count < 0:
+            count, cmd = -count, {'cursor-down': 'cursor-up', 'cursor-right': 'cursor-left'}[cmd]
+        tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
 
 
 def read_info(pane):
