@@ -223,6 +223,33 @@ editor ignores 'alpha beta gamma'
 pick b
 expect "a click that does not move the cursor is followed by arrow keys" 8 "$(cursor_x)"
 
+echo "in a copy-mode selection, the pick moves the selection's end"
+copied() {
+    inner send-keys -t "$PANE" -X copy-selection-no-clear
+    inner show-buffer
+}
+recorder sgr 'alpha beta gamma' 'bravo delta'
+inner copy-mode -t "$PANE"
+inner send-keys -t "$PANE" -X top-line
+inner send-keys -t "$PANE" -X start-of-line
+inner send-keys -t "$PANE" -X begin-selection
+pick d
+expect "the selection runs from its start to the pick, in copy mode, no click" \
+    "1 alpha beta gamma
+bravo d " "$(inner display -p -t "$PANE" '#{pane_in_mode}') $(copied) $(recorded)"
+
+recorder sgr $(printf 'row%02d ' $(seq 1 30))
+inner copy-mode -t "$PANE"
+inner send-keys -t "$PANE" -X -N 12 scroll-up
+inner send-keys -t "$PANE" -X top-line
+inner send-keys -t "$PANE" -X start-of-line
+inner send-keys -t "$PANE" -X begin-selection
+top=$(inner capture-pane -p -t "$PANE" -S "-$(inner display -p -t "$PANE" '#{scroll_position}')" | head -1)
+pick r s
+expect "  ... from the scrolled-back view" "$top
+${top:0:1}" "$(copied)"
+inner send-keys -t "$PANE" -X cancel
+
 echo "other programs get arrow keys within the cursor's line"
 # bash: type a line, move along it with tmux-jump-click, then insert X and run it.
 bash_line() {

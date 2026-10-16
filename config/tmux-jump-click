@@ -21,7 +21,10 @@
 # all, the place is jumped to in copy mode.
 # Labels go to the places the cursor can reach first, then by distance from
 # the cursor; the nearest get one key, the rest two (or more).
-# Esc, or a key that matches nothing, cancels. The pane leaves copy mode first.
+# Esc, or a key that matches nothing, cancels. The pane leaves copy mode first,
+# unless a selection is being made there: then every place on the copy-mode
+# view (scrolled back or not) gets a label, and the pick moves the selection's
+# end.
 #
 #   tmux-jump-click --pick SCREEN FIRST LAST CY CX OUT   (internal) the popup's
 #       side: read the keys, write "row col" of the pick to OUT; FIRST to LAST
@@ -103,7 +106,7 @@ def draw(screen, width, first, last, labelled=()):
     """Paint the captured screen, rows FIRST to LAST bright and the rest faint
     (all dimmed when that is every row), with each (row, col, label) on top:
     red where the cursor can go, blue for copy mode."""
-    whole = first == 0 and last >= len(screen) - 1
+    whole = last < first or (first == 0 and last >= len(screen) - 1)
     buf = ['\x1b[?25l\x1b[2J']
     for row, line in enumerate(screen):
         style = DIM if whole else BRIGHT if first <= row <= last else FAINT
@@ -276,30 +279,51 @@ def cursor_moved(pane, before, wait=0.3):
 
 
 FIELDS = ['pane_in_mode', 'pane_width', 'pane_height', 'cursor_x', 'cursor_y',
-          'mouse_any_flag', 'mouse_sgr_flag']
+          'mouse_any_flag', 'mouse_sgr_flag', 'selection_active', 'scroll_position',
+          'copy_cursor_x', 'copy_cursor_y']
 
 
-def main(pane, client):
-    if tmux('display-message', '-p', '-t', pane, '#{pane_in_mode}').strip() == '1':
-        tmux('send-keys', '-t', pane, '-X', 'cancel')
-    info = read_info(pane)
-    screen = tmux('capture-pane', '-p', '-t', pane).rstrip('\n')
-    lines = screen.split('\n')
-    first, last = reachable_rows(pane, info, lines)
+def choose(pane, client, info, screen, first, last, cy, cx):
+    """(row, col) picked in the popup over PANE showing SCREEN, or None."""
     with tempfile.TemporaryDirectory(prefix='tmux-jump-click.') as tmp:
         screen_file, out_file = os.path.join(tmp, 'screen'), os.path.join(tmp, 'pick')
         with open(screen_file, 'w', encoding='utf-8') as f:
             f.write(screen)
         cmd = ' '.join(shlex.quote(str(a)) for a in
                        [sys.executable, os.path.abspath(__file__), '--pick', screen_file,
-                        first, last, info['cursor_y'], info['cursor_x'], out_file])
+                        first, last, cy, cx, out_file])
         subprocess.run(['tmux', 'display-popup', '-c', client, '-t', pane, '-E', '-B',
                         '-x', 'P', '-y', 'P', '-w', info['pane_width'],
                         '-h', info['pane_height'], cmd])
         if not os.path.exists(out_file):
-            return
+            return None
         with open(out_file) as f:
-            row, col = map(int, f.read().split())
+            return tuple(map(int, f.read().split()))
+
+
+def main(pane, client):
+    info = read_info(pane)
+    if info['pane_in_mode'] == '1' and info['selection_active'] == '1':
+        # Selecting in copy mode: the pick, in the view as scrolled, moves
+        # the copy cursor and so the selection's end.
+        scroll, height = int(info['scroll_position']), int(info['pane_height'])
+        screen = tmux('capture-pane', '-p', '-t', pane, '-S', str(-scroll),
+                      '-E', str(height - 1 - scroll)).rstrip('\n')
+        picked = choose(pane, client, info, screen, 0, -1,
+                        info['copy_cursor_y'], info['copy_cursor_x'])
+        if picked:
+            copy_mode_jump(pane, screen.split('\n'), *picked)
+        return
+    if info['pane_in_mode'] == '1':
+        tmux('send-keys', '-t', pane, '-X', 'cancel')
+        info = read_info(pane)
+    screen = tmux('capture-pane', '-p', '-t', pane).rstrip('\n')
+    lines = screen.split('\n')
+    first, last = reachable_rows(pane, info, lines)
+    picked = choose(pane, client, info, screen, first, last, info['cursor_y'], info['cursor_x'])
+    if not picked:
+        return
+    row, col = picked
     if not first <= row <= last:
         copy_mode_jump(pane, lines, row, col)
         return
