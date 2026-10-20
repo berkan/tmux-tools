@@ -49,7 +49,8 @@ at() {
 }
 run() { TMUX="$SOCKET,0,0" python3 "$EXPAND" "$1" "$PANE"; }
 selected() {
-    if [ "$(t display -p -t "$PANE" '#{selection_present}')" = 1 ]; then
+    # #{selection_active} too: tmux 3.5 counts a one-character selection as not present.
+    if [ "$(t display -p -t "$PANE" '#{selection_present}#{selection_active}')" != 00 ]; then
         t send -t "$PANE" -X copy-selection-no-clear
         t show-buffer
     fi

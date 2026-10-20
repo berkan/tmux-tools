@@ -278,7 +278,7 @@ def regions(view, p, rules):
 
 
 FIELDS = ['pane_in_mode', 'scroll_position', 'history_size', 'pane_height',
-          'copy_cursor_x', 'copy_cursor_y', 'selection_present',
+          'copy_cursor_x', 'copy_cursor_y', 'selection_present', 'selection_active',
           'selection_start_x', 'selection_start_y', 'selection_end_x', 'selection_end_y']
 
 
@@ -329,7 +329,9 @@ def main(action, pane):
         return min(max(int(y) - top, 0), height - 1), int(x)
 
     current = None
-    if info['selection_present'] == '1':
+    # tmux 3.5 reports a one-character selection, start and end at the
+    # cursor, as not present while it is still active.
+    if '1' in (info['selection_present'], info['selection_active']):
         a = view.offset(*to_view(info['selection_start_x'], info['selection_start_y']))
         b = view.offset(*to_view(info['selection_end_x'], info['selection_end_y']))
         current = (min(a, b), max(a, b))

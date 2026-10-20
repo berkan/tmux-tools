@@ -281,7 +281,7 @@ expect "the default key is C-j, and the old key is unbound" "1 0" \
 echo "other programs get arrow keys within the cursor's line"
 # bash: type a line, move along it with tmux-jump-click, then insert X and run it.
 bash_line() {
-    run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' bash --norc --noprofile"
+    run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --norc --noprofile"
     inner send-keys -t "$PANE" -l "$1"
     sleep 0.2
 }
@@ -302,7 +302,7 @@ expect "wrapped rows count as one line" \
     "Xkappa w01 w02 w03 w04 w05 w06 w07 w08 w09 w10 w11 w12 w13 w14 w15 w16 w17 w18 w19 w20 w21 w22 w23 w24 w25 w26 w27 w28 w29 w30" \
     "$(ran)"
 
-run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' bash --norc --noprofile"
+run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --norc --noprofile"
 inner send-keys -t "$PANE" -l 'echo bravo'
 inner send-keys -t "$PANE" Enter
 sleep 0.2
