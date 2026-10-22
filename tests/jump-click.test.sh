@@ -169,6 +169,8 @@ recorder sgr 'beta above' '────────' '❯ alpha beta' '───
 pick b d
 expect "a place outside them is jumped to in copy mode" "1 0,4 " \
     "$(inner display -p -t "$PANE" '#{pane_in_mode} #{copy_cursor_x},#{copy_cursor_y}') $(recorded)"
+expect "  ... with a selection started there" "1 0,4" \
+    "$(inner display -p -t "$PANE" '#{selection_active} #{selection_start_x},#{e|-:#{selection_start_y},#{history_size}}')"
 
 recorder sgr '' '' 'alpha beta' '' '› x'
 pick b
@@ -205,6 +207,18 @@ recorder sgr 'alpha beta gamma'
 pick q
 expect "a key with no match cancels" "" "$(recorded)"
 
+recorder sgr 'alpha beta gamma' 'bravo'
+pick b $'\x7f' g
+expect "Backspace at the labels takes back the character" "$(hex '\e[<0;12;1M\e[<0;12;1m')" "$(recorded)"
+
+# 30 places: the last five labels take two keys, m and then another.
+recorder sgr "$(printf 'b %.0s' $(seq 30))"
+pick b a
+first_label=$(recorded)
+recorder sgr "$(printf 'b %.0s' $(seq 30))"
+pick b m $'\x7f' a
+expect "Backspace takes back the first key of a label" "$first_label" "$(recorded)"
+
 recorder sgr 'alpha beta gamma'
 inner copy-mode -t "$PANE"
 pick g
@@ -222,6 +236,7 @@ expect "a click that moves the cursor is all that is sent" \
 editor ignores 'alpha beta gamma'
 pick b
 expect "a click that does not move the cursor is followed by arrow keys" 8 "$(cursor_x)"
+expect "  ... and starts no copy mode or selection" 0 "$(inner display -p -t "$PANE" '#{pane_in_mode}')"
 
 echo "in a copy-mode selection, the pick moves the selection's end"
 copied() {
@@ -273,10 +288,14 @@ inner set -g @jump-click-key M-j
 TMUX="$SOCKET,0,0" python3 "$CLICK" bind
 expect "bind uses the configured key" 1 \
     "$(inner list-keys -T prefix | grep -cE "prefix +M-j +run-shell .*tmux-jump-click '#\{pane_id\}' '#\{client_name\}'")"
+inner set -g @jump-click-key 'j C-b'
+TMUX="$SOCKET,0,0" python3 "$CLICK" bind
+expect "several keys, space-separated, are all bound; the old one is unbound" "1 1 0" \
+    "$(inner list-keys -T prefix | grep -cE "prefix +j +run-shell .*tmux-jump-click") $(inner list-keys -T prefix | grep -cE "prefix +C-b +run-shell .*tmux-jump-click") $(inner list-keys -T prefix | grep -cE "prefix +M-j ")"
 inner set -gu @jump-click-key
 TMUX="$SOCKET,0,0" python3 "$CLICK" bind
-expect "the default key is C-j, and the old key is unbound" "1 0" \
-    "$(inner list-keys -T prefix | grep -cE "prefix +C-j +run-shell .*tmux-jump-click") $(inner list-keys -T prefix | grep -cE "prefix +M-j ")"
+expect "the default key is C-j, and the old keys are unbound" "1 0 0" \
+    "$(inner list-keys -T prefix | grep -cE "prefix +C-j +run-shell .*tmux-jump-click") $(inner list-keys -T prefix | grep -cE "prefix +j ") $(inner list-keys -T prefix | grep -cE "prefix +C-b ")"
 
 echo "other programs get arrow keys within the cursor's line"
 # bash: type a line, move along it with tmux-jump-click, then insert X and run it.

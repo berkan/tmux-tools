@@ -20,14 +20,17 @@
 # would walk a shell's history. If neither a click nor the keys get there after
 # all, the place is jumped to in copy mode.
 # Labels go to the places the cursor can reach first, then by distance from
-# the cursor; the nearest get one key, the rest two (or more).
-# Esc, or a key that matches nothing, cancels. The pane leaves copy mode first,
+# the cursor; the nearest get one key, the rest two (or more). A blue label
+# also starts a selection there, as v would: the next jump moves its end.
+# Backspace takes back the last key; at the labels' first key, it goes back to
+# typing the character. Esc, or a key that matches nothing, cancels. The pane leaves copy mode first,
 # unless a selection is being made there: then every place on the copy-mode
 # view (scrolled back or not) gets a label, and the pick moves the selection's
 # end.
 #
-#   tmux-jump-click bind   bind the key in the @jump-click-key option (default
-#       C-j) after the prefix; run it from tmux.conf after setting the option
+#   tmux-jump-click bind   bind the keys in the @jump-click-key option (default
+#       C-j; several separated by spaces) after the prefix; run it from
+#       tmux.conf after setting the option
 #   tmux-jump-click --pick SCREEN FIRST LAST CY CX MY MX OUT   (internal) the
 #       popup's side: read the keys, write "row col" of the pick to OUT; FIRST
 #       to LAST are the rows the cursor can reach, (CY, CX) the cursor, (MY, MX)
@@ -50,6 +53,7 @@ RULE_CHARS = '─━═'
 LABEL = '\x1b[0;1;38;5;231;48;5;160m'
 COPY_LABEL = '\x1b[0;1;38;5;231;48;5;25m'
 MARK = '\x1b[0;30;43m'                  # the start of a copy-mode selection
+BACKSPACE = ('\x7f', '\x08')
 KEY_OPTION, KEY_DEFAULT = '@jump-click-key', 'C-j'
 
 
@@ -148,22 +152,30 @@ def pick(screen_file, first, last, cy, cx, my, mx, out_file):
         draw(screen, width, first, last, mark=(my, mx))
         # Tells tests the popup is up and waiting for keys.
         open(os.path.join(os.path.dirname(out_file), 'ready'), 'w').close()
-        key = os.read(fd, 8).decode('utf-8', 'replace')
-        if len(key) != 1 or not key.isprintable():
-            return
-        places = ordered(matches(screen, key), first, last, cy, cx)
-        labels = labels_for(len(places))
-        typed = ''
-        while len(places) > 1:
-            draw(screen, width, first, last, [(r, c, l[len(typed):])
-                                              for (r, c), l in zip(places, labels)], (my, mx))
-            k = os.read(fd, 8).decode('utf-8', 'replace')
-            typed += k
-            kept = [(p, l) for p, l in zip(places, labels) if l.startswith(typed)]
-            places, labels = [p for p, _ in kept], [l for _, l in kept]
-        if places:
-            with open(out_file, 'w') as f:
-                f.write('%d %d\n' % places[0])
+        while True:
+            key = os.read(fd, 8).decode('utf-8', 'replace')
+            if len(key) != 1 or not key.isprintable():
+                return
+            places = ordered(matches(screen, key), first, last, cy, cx)
+            labels = labels_for(len(places))
+            typed, kept = '', list(zip(places, labels))
+            while len(kept) > 1:
+                draw(screen, width, first, last,
+                     [(r, c, l[len(typed):]) for (r, c), l in kept], (my, mx))
+                k = os.read(fd, 8).decode('utf-8', 'replace')
+                if k not in BACKSPACE:
+                    typed += k
+                elif typed:
+                    typed = typed[:-1]
+                else:
+                    break                   # back to typing the character
+                kept = [(p, l) for p, l in zip(places, labels) if l.startswith(typed)]
+            else:
+                if kept:
+                    with open(out_file, 'w') as f:
+                        f.write('%d %d\n' % kept[0][0])
+                return
+            draw(screen, width, first, last, mark=(my, mx))
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
@@ -250,10 +262,11 @@ def move_cursor(pane, info, row, col):
     return True
 
 
-def copy_mode_jump(pane, screen, row, col):
-    """Copy mode with its cursor at (ROW, COL). The cursor moves by character,
-    and does not always land where counted (from an empty top line it goes a
-    row too far), so it is moved, checked and moved again."""
+def copy_mode_jump(pane, screen, row, col, select=False):
+    """Copy mode with its cursor at (ROW, COL), and with SELECT a selection
+    started there. The cursor moves by character, and does not always land
+    where counted (from an empty top line it goes a row too far), so it is
+    moved, checked and moved again."""
     tmux('copy-mode', '-t', pane)
     for cmd in ['top-line', 'start-of-line']:
         tmux('send-keys', '-t', pane, '-X', cmd)
@@ -265,10 +278,12 @@ def copy_mode_jump(pane, screen, row, col):
         else:
             count, cmd = char_index(screen[row], col) - char_index(screen[row], x), 'cursor-right'
         if not count:
-            return
+            break
         if count < 0:
             count, cmd = -count, {'cursor-down': 'cursor-up', 'cursor-right': 'cursor-left'}[cmd]
         tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
+    if select:
+        tmux('send-keys', '-t', pane, '-X', 'begin-selection')
 
 
 def read_info(pane):
@@ -338,7 +353,7 @@ def main(pane, client):
         return
     row, col = picked
     if not first <= row <= last:
-        copy_mode_jump(pane, lines, row, col)
+        copy_mode_jump(pane, lines, row, col, select=True)
         return
     cursor = (int(info['cursor_y']), int(info['cursor_x']))
     if info['mouse_any_flag'] == '1' and cursor != (row, col):
@@ -350,15 +365,18 @@ def main(pane, client):
 
 
 def bind():
-    """Bind the key in the @jump-click-key option (default C-j) after the
-    prefix, and unbind the one bound before if it changed."""
-    key = tmux('show-options', '-gqv', KEY_OPTION).strip() or KEY_DEFAULT
-    old = tmux('show-options', '-gqv', '@jump-click-bound-key').strip()
-    tmux('bind-key', key, 'run-shell', '-b',
-         f"{os.path.abspath(__file__)} '#{{pane_id}}' '#{{client_name}}'")
-    if old and old != key:
-        subprocess.run(['tmux', 'unbind-key', old], stderr=subprocess.DEVNULL)
-    tmux('set-option', '-g', '@jump-click-bound-key', key)
+    """Bind the keys in the @jump-click-key option (default C-j; several are
+    separated by spaces) after the prefix, and unbind those bound before that
+    it no longer names."""
+    keys = tmux('show-options', '-gqv', KEY_OPTION).split() or [KEY_DEFAULT]
+    old = tmux('show-options', '-gqv', '@jump-click-bound-key').split()
+    for key in keys:
+        tmux('bind-key', key, 'run-shell', '-b',
+             f"{os.path.abspath(__file__)} '#{{pane_id}}' '#{{client_name}}'")
+    for key in old:
+        if key not in keys:
+            subprocess.run(['tmux', 'unbind-key', key], stderr=subprocess.DEVNULL)
+    tmux('set-option', '-g', '@jump-click-bound-key', ' '.join(keys))
 
 
 if __name__ == '__main__':
