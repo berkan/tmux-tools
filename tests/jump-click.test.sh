@@ -16,6 +16,7 @@ INNER="tmux-jump-click-inner-$$"
 cleanup() {
     tmux -L "$INNER" kill-server 2>/dev/null || true
     tmux -L "$OUTER" kill-server 2>/dev/null || true
+    rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$INNER" "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$OUTER"   # tmux leaves them
     rm -rf "$SCRATCH"
 }
 trap cleanup EXIT

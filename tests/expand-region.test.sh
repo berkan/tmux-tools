@@ -13,6 +13,7 @@ SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/tmux-expand-region-test.XXXXXX")" &&
 SERVER="tmux-expand-region-$$"
 cleanup() {
     tmux -L "$SERVER" kill-server 2>/dev/null || true
+    rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$SERVER"     # tmux leaves it when the server exits
     rm -rf "$SCRATCH"
 }
 trap cleanup EXIT
