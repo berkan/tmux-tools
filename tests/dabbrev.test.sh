@@ -1,0 +1,343 @@
+#!/usr/bin/env bash
+# Tests for config/tmux-dabbrev: completing the word before the cursor from the
+# words on the pane's screen. A scratch tmux server runs a one-line editor
+# under some lines of text; the script is run on its pane as the M-/ and Tab
+# bindings run it, and the editor's line is read back. Needs tmux and python3,
+# no Docker.
+#
+#   bash tests/dabbrev.test.sh
+
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+DAB="$HERE/../config/tmux-dabbrev"
+SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/tmux-dabbrev-test.XXXXXX")" && pwd)"
+export TMUX_TMPDIR="$SCRATCH"         # the server's socket goes with the scratch dir
+export TMPDIR="$SCRATCH/tmp"          # and the script's state files
+mkdir -p "$TMPDIR"
+unset TMUX
+cleanup() {
+    TMUX_TMPDIR="$SCRATCH/o" tmux kill-server 2>/dev/null || true
+    tmux kill-server 2>/dev/null || true
+    rm -rf "$SCRATCH"
+}
+trap cleanup EXIT
+
+pass=0
+fail=0
+expect() {
+    local name="$1" want="$2" got="$3"
+    if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "  ✓ $name"
+    else fail=$((fail + 1)); echo "  ✗ $name: want '$want', got '$got'"; fi
+}
+
+# A one-line editor: the lines given, then "> " and what is typed, which it
+# also writes to a file (the screen cannot show a trailing space). Backspace
+# deletes; a Tab is logged, not inserted.
+cat > "$SCRATCH/editor.py" <<'EOF'
+import os, sys, tty
+log = open(sys.argv[1], 'a')
+tty.setraw(0)
+os.write(1, ('\x1b[2J\x1b[H' + ''.join(l + '\r\n' for l in sys.argv[2:]) + '> ').encode())
+text = ''
+while True:
+    for ch in os.read(0, 64).decode('utf-8', 'replace'):
+        if ch == '\t':
+            log.write('TAB\n'); log.flush()
+        elif ch == '\x7f':
+            text = text[:-1]
+        elif ch.isprintable():
+            text += ch
+    os.write(1, ('\r\x1b[K> ' + text).encode())
+    open(sys.argv[1] + '.text', 'w').write(text)
+EOF
+
+# Wide enough that an absolute path under the scratch dir is on one row.
+tmux -f /dev/null new-session -d -x 200 -y 12 'sleep 600'
+tmux set -s escape-time 0
+PANE=$(tmux display -p '#{pane_id}')
+
+# editor LINE... — restart the pane with the editor under LINEs, in $CWD.
+ROW=0
+CWD="$SCRATCH"
+editor() {
+    : > "$SCRATCH/tabs.log"; : > "$SCRATCH/tabs.log.text"
+    ROW=$#
+    tmux respawn-pane -k -t "$PANE" -c "$CWD" "python3 $SCRATCH/editor.py $SCRATCH/tabs.log $(printf '%q ' "$@")"
+    sleep 0.4
+}
+typed() { tmux send-keys -t "$PANE" -l "$1"; sleep 0.2; }
+dab() { for a in "$@"; do HOME="$SCRATCH/files" python3 "$DAB" "$a" "$PANE"; done; sleep 0.1; }
+line() { cat "$SCRATCH/tabs.log.text"; }
+tabs() { grep -c TAB "$SCRATCH/tabs.log" || true; }
+
+echo "M-/ (expand)"
+editor 'alpha beta gamma'
+typed 'ga'; dab expand
+expect "completes the word before the cursor, and a space" "gamma " "$(line)"
+
+editor 'gamma one' 'garden two'
+typed 'ga'; dab expand
+expect "the nearest match comes first" "garden " "$(line)"
+dab expand
+expect "again: the next match replaces it" "gamma " "$(line)"
+dab expand
+expect "past the last: back to what was typed" ga "$(line)"
+dab expand
+expect "  ... and round again" "garden " "$(line)"
+
+editor 'gamma gamma garden'
+typed 'ga'; dab expand expand expand
+expect "each word once" ga "$(line)"
+
+editor 'Gamma garden'
+typed 'Ga'; dab expand
+expect "a capital in what was typed matches case" "Gamma " "$(line)"
+editor 'Gamma'
+typed 'ga'; dab expand
+expect "lower case matches either, the word goes in as on screen" "Gamma " "$(line)"
+
+editor 'ga'
+typed 'ga'; dab expand
+expect "the word itself is no completion" ga "$(line)"
+
+editor 'see src/tmux-dabbrev.py now'
+typed 'src/tm'; dab expand
+expect "a word may hold / . - inside" "src/tmux-dabbrev.py " "$(line)"
+
+editor '日本語 gamma'
+typed '日本 ga'; dab expand
+expect "wide characters before the word" '日本 gamma ' "$(line)"
+
+echo "context"
+editor 'a long recording here' 'Recorder/2026 more'
+typed 'long re'; dab expand
+expect "a match after the words typed before it beats a nearer one" 'long recording ' "$(line)"
+editor 'a long recording here' 'Recorder/2026 more'
+typed 're'; dab expand
+expect "  ... without them, the nearer one" 'Recorder/2026 ' "$(line)"
+editor 'the long red' 'a long recording' 'red'
+typed 'a long re'; dab tab
+expect "more words before it matching beats fewer" 'a long recording ' "$(line)"
+editor 'long' 'recording here' 'Recorder/2026 more'
+typed 'long re'; dab tab tab
+expect "  ... across a line break; Tab goes on from that match" 'long recording here ' "$(line)"
+
+echo "a full screen"
+# Every word a candidate, each with the rest of the screen after it: far more
+# state than one tmux command can carry (about 16 KB).
+words=()
+for r in $(seq 10); do
+    l=''; for c in $(seq 8); do l+="word$r$c "; done; words+=("$l")
+done
+editor "${words[@]}"
+typed 'wo'; dab tab
+expect "completes" 'word101 ' "$(line)"
+dab tab
+expect "  ... and goes on from the state kept" 'word101 word102 ' "$(line)"
+
+editor 'alpha beta'
+typed 'zz'; dab expand
+expect "no match: nothing changes" zz "$(line)"
+expect "  ... and no Tab is sent" 0 "$(tabs)"
+
+echo "Tab"
+editor 'the garden two, three' 'four'
+typed 'ga'; dab tab
+expect "completes as M-/ does" "garden " "$(line)"
+dab tab
+expect "again: the word after it on screen" 'garden two ' "$(line)"
+dab tab
+expect "  ... with what is between, punctuation too" 'garden two, three ' "$(line)"
+dab tab
+expect "  ... and on to the next line, as a space" 'garden two, three four ' "$(line)"
+dab tab
+expect "at the end of the screen: nothing more" 'garden two, three four ' "$(line)"
+expect "  ... and no Tab is sent" 0 "$(tabs)"
+
+editor 'gamma one' 'garden two'
+typed 'ga'; dab expand expand tab
+expect "Tab after M-/ goes on from the match M-/ chose" 'gamma one ' "$(line)"
+
+editor 'garden two'
+typed 'ga'; dab tab
+typed 'x'; dab tab
+expect "typing in between starts afresh: x has no match, so Tab goes through" 1 "$(tabs)"
+expect "  ... and the line is as typed" 'garden x' "$(line)"
+
+editor 'gamma ga'
+typed 'ga'; dab tab
+editor 'gamma ga'
+typed 'gamma '; dab tab
+expect "a state left from before is not gone on from" "1 gamma " "$(tabs) $(line)"
+
+editor 'alpha beta'
+typed 'say '; dab tab
+expect "nothing before the cursor: Tab goes through" 1 "$(tabs)"
+editor 'alpha beta'
+typed 'a'; dab tab
+expect "one letter: Tab goes through" "1 a" "$(tabs) $(line)"
+editor 'alpha beta'
+typed 'zz'; dab tab
+expect "no match: Tab goes through" "1 zz" "$(tabs) $(line)"
+editor 'see src/alpha.py'
+typed '@src/al'; dab tab
+expect "after @ (the program's own file completion): Tab goes through" "1 @src/al" "$(tabs) $(line)"
+editor '/compact /config'
+typed '/co'; dab tab
+expect "a /command: Tab goes through" "1 /co" "$(tabs) $(line)"
+
+echo "M-/ after Tab: the other words that follow"
+editor 'alpha beta one' 'alpha gamma two'
+typed 'al'; dab tab tab
+expect "Tab: the word after the nearest alpha" 'alpha gamma ' "$(line)"
+dab expand
+expect "M-/: the word after another alpha" 'alpha beta ' "$(line)"
+dab expand
+expect "  ... past the last: back to before the Tab" 'alpha ' "$(line)"
+dab expand
+expect "  ... and round again" 'alpha gamma ' "$(line)"
+dab expand tab
+expect "Tab goes on from the alpha M-/ chose" 'alpha beta one ' "$(line)"
+dab undo
+expect "undo takes back that Tab" 'alpha beta ' "$(line)"
+dab undo
+expect "  ... then the M-/ presses, one at a time" 'alpha gamma ' "$(line)"
+dab undo
+expect "  ... " 'alpha ' "$(line)"
+
+editor 'see alpha beta' 'alpha beta' 'alpha delta'
+typed 'see al'; dab tab tab expand
+expect "the same word after two alphas is one choice" 'see alpha delta ' "$(line)"
+
+echo "paths"
+F="$SCRATCH/files"
+mkdir -p "$F/alps/other" "$F/far/away"
+touch "$F/alpha.txt" "$F/Beta.md" "$F/.hidden" "$F/alps/inner.txt"
+CWD="$F"
+editor 'alpha.txt alpine'
+typed './al'; dab expand
+expect "./ completes from the files, not the screen; a file and a space" './alpha.txt ' "$(line)"
+dab expand
+expect "  ... again: the next, a folder and a /" './alps/' "$(line)"
+dab expand
+expect "  ... past the last: back to what was typed" './al' "$(line)"
+editor
+typed './alps'; dab tab
+expect "Tab completes the folder" './alps/' "$(line)"
+dab tab
+expect "  ... again: what is in it" './alps/inner.txt ' "$(line)"
+dab expand
+expect "  ... M-/: the next thing in it" './alps/other/' "$(line)"
+dab expand
+expect "  ... past the last: back to the folder" './alps/' "$(line)"
+dab undo undo
+expect "  ... undo goes back press by press" './alps/inner.txt ' "$(line)"
+editor
+typed './alps'; dab tab
+typed 'ot'; dab tab
+expect "typing after a folder: completes in it" './alps/other/' "$(line)"
+editor
+typed './alps/inner.txt'; dab tab tab
+expect "after a file, Tab adds nothing" '0 ./alps/inner.txt ' "$(tabs) $(line)"
+editor
+typed './b'; dab expand
+expect "smart case" './Beta.md ' "$(line)"
+editor
+typed './'; dab expand
+expect "dotfiles stay out" './alpha.txt ' "$(line)"
+editor
+typed './.h'; dab expand
+expect "  ... unless what was typed starts with a dot" './.hidden ' "$(line)"
+editor
+typed 'see ~/Be'; dab tab
+expect "~/ from the home folder" 'see ~/Beta.md ' "$(line)"
+editor
+typed "see //${F#/}/fa"; dab tab tab
+expect "// stands for / (alone, / is the program's commands)" "see $F/far/away/" "$(line)"
+editor
+typed "$F/Be"; dab tab
+expect "so does a word starting /folder/" "$F/Beta.md " "$(line)"
+editor
+typed "//${F#/}/Be"; dab tab undo
+expect "  ... and undo gives back the //" "//${F#/}/Be" "$(line)"
+CWD="$F/alps"
+editor
+typed '(../Be'; dab tab
+expect "../, after a bracket" '(../Beta.md ' "$(line)"
+editor
+typed './zz'; dab tab
+expect "no such file: Tab goes through" '1 ./zz' "$(tabs) $(line)"
+editor 'https://alpha.example'
+typed 'https://al'; dab tab
+expect "a URL is no path: completes from the screen" 'https://alpha.example ' "$(line)"
+CWD="$SCRATCH"
+
+echo "M-? (undo)"
+editor 'garden two three'
+typed 'ga'; dab tab tab
+dab undo
+expect "takes back the last Tab" 'garden ' "$(line)"
+dab undo
+expect "  ... and the first, back to what was typed" ga "$(line)"
+dab undo
+expect "  ... and no further" ga "$(line)"
+dab tab
+expect "  ... where Tab completes again" 'garden ' "$(line)"
+
+editor 'gamma one' 'garden two'
+typed 'ga'; dab expand expand undo
+expect "takes back an M-/: the match before" 'garden ' "$(line)"
+dab expand
+expect "  ... and M-/ goes on from there" 'gamma ' "$(line)"
+
+editor 'gamma'
+typed 'ga'; dab undo
+expect "with nothing to take back: nothing, and no key sent" "0 ga" "$(tabs) $(line)"
+
+echo "bind"
+tmux set -g @dabbrev-tab-commands 'python3 claude'
+python3 "$DAB" bind
+expect "M-/ runs it, in the foreground (keys typed after it wait)" 1 \
+    "$(tmux list-keys -T root | grep -cE "root +M-/ +run-shell \"[^ ]*tmux-dabbrev expand '#\{pane_id\}'\"")"
+expect "M-? undoes" 1 \
+    "$(tmux list-keys -T root | grep -cE "root +M-\\? +run-shell \"[^ ]*tmux-dabbrev undo '#\{pane_id\}'\"")"
+expect "Tab runs it in the configured programs, else is sent on" 1 \
+    "$(tmux list-keys -T root | grep -F 'Tab' | grep -F 'python3|claude' | grep -F 'tmux-dabbrev tab' | grep -c 'send-keys Tab')"
+tmux set -g @dabbrev-key M-.
+tmux set -g @dabbrev-undo-key M-,
+tmux set -g @dabbrev-tab-commands ''
+python3 "$DAB" bind
+expect "other keys, the old ones unbound, and no Tab" "1 1 0 0 0" \
+    "$(tmux list-keys -T root | grep -cE 'root +M-\. ') $(tmux list-keys -T root | grep -cE 'root +M-, ') $(tmux list-keys -T root | grep -cE 'root +M-/ ') $(tmux list-keys -T root | grep -cE 'root +M-\? ') $(tmux list-keys -T root | grep -cE 'root +Tab ')"
+tmux set -gu @dabbrev-undo-key
+
+echo "keys pressed in a client"
+# The bindings as a terminal reaches them: a client of the server, run in a
+# pane of another, gets M-/ and Tab.
+editor 'gamma one' 'garden two'
+tmux set -gu @dabbrev-key
+tmux set -g @dabbrev-tab-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"  # the editor
+python3 "$DAB" bind
+mkdir -p "$SCRATCH/o"
+TMUX_TMPDIR="$SCRATCH/o" tmux -f /dev/null new-session -d -x 80 -y 13 \
+    "env -u TMUX TMUX_TMPDIR=$SCRATCH tmux attach"
+sleep 0.8
+outer() { TMUX_TMPDIR="$SCRATCH/o" tmux send-keys "$@"; sleep 0.4; }
+editor 'gamma one' 'garden two'
+outer -l ga; outer M-/; outer M-/
+expect "M-/ twice" "gamma " "$(line)"
+outer Tab
+expect "  ... then Tab" 'gamma one ' "$(line)"
+outer M-?
+expect "  ... then M-? takes the Tab back" 'gamma ' "$(line)"
+outer -l 'zz'; outer Tab
+expect "Tab with nothing to complete reaches the program" "1 gamma zz" "$(tabs) $(line)"
+tmux set -g @dabbrev-tab-commands 'claude'
+python3 "$DAB" bind
+outer Tab
+expect "in other programs Tab goes straight through" 2 "$(tabs)"
+TMUX_TMPDIR="$SCRATCH/o" tmux kill-server
+
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ]

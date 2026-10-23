@@ -1,0 +1,411 @@
+#!/usr/bin/env python3
+# tmux-dabbrev expand|tab|undo PANE — complete the word before the cursor in
+# PANE, as Emacs' dabbrev does from the buffer. What was typed is read off the
+# screen left of the cursor, and the completion is typed into the program
+# (Backspaces, then the text), so it works in any program that takes typed
+# keys: Claude Code, pi, a shell. Completions come from a backend, the first
+# in BACKENDS whose trigger matches the text before the cursor:
+#
+#   paths         a word starting ~/, ./, ../, // (for /: alone, / is the
+#                 program's commands) or /folder/: the files in that folder,
+#                 relative to the pane's directory. A file ends in a space, a
+#                 folder in /. Dotfiles only when what was typed starts with a
+#                 dot. Tab after a folder: what is in it.
+#   program       Tab on a word starting @ or /: sent on to the program (its
+#                 own file and command completion).
+#   screen        the words on the pane's screen (not the scrollback), below.
+#
+# A completion from the screen ends in a space, so the next press can follow
+# at once.
+#
+#   expand (M-/)  the best word on screen that starts with what was typed:
+#                 one after the words typed before it, as many as possible,
+#                 then the nearest. Again, the next best replaces it, and past
+#                 the last, what was typed comes back. After a Tab, the same
+#                 for the words that Tab added: the other words that follow
+#                 the word before them elsewhere on screen; past the last,
+#                 none. Smart case: case matters only when what was typed has
+#                 a capital; the word goes in as it is on screen.
+#   tab (Tab)     the same first completion; again, the word that follows it
+#                 on screen, with what is between them (a line break as a
+#                 space), and so on, from where the last M-/ chose. Tab is
+#                 sent on to the program instead when there is nothing to
+#                 complete: no backend takes the word (for the screen, under
+#                 two letters before the cursor) or it has no match.
+#   undo (M-?)    take back the last press; again, the one before, back to
+#                 what was typed.
+#
+# A press goes on from the last one while the program, the cursor's row and
+# the text left of the cursor are as the last one left them; else it starts
+# afresh. The state is kept in a file per pane under $TMPDIR (a tmux option
+# cannot hold it: one command carries at most about 16 KB).
+#
+#   tmux-dabbrev bind   bind the keys in @dabbrev-key (default M-/) and
+#       @dabbrev-undo-key (default M-?) without the prefix, and Tab in the
+#       programs named in @dabbrev-tab-commands (by #{pane_current_command};
+#       empty: Tab is left alone); run it from tmux.conf after setting them.
+#       All run in the foreground, so keys typed meanwhile wait and stay in
+#       order.
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import time
+import unicodedata
+
+WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
+TYPED = re.compile(r"\w[\w'./-]*$")
+PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
+KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?')}
+TAB_OPTION, TAB_DEFAULT = '@dabbrev-tab-commands', 'claude codex pi node agy gemini'
+CONTEXT = 3                     # words before what was typed that rank a match
+
+
+def tmux(*args, check=True):
+    return subprocess.run(['tmux', *args], check=check, text=True,
+                          stdout=subprocess.PIPE).stdout
+
+
+def cell_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in 'WF' else 1
+
+
+def left_of(line, cx):
+    """The characters of LINE in the cells left of column CX."""
+    col = 0
+    for i, ch in enumerate(line):
+        if col >= cx:
+            return line[:i]
+        col += cell_width(ch)
+    return line
+
+
+def smartcase(typed, word):
+    if typed != typed.lower():
+        return word.startswith(typed)
+    return word.lower().startswith(typed.lower())
+
+
+def context(words, before):
+    """How many of the words BEFORE (nearest last) end the list WORDS, case
+    aside: the words on screen before a match against those typed before it."""
+    n = 0
+    while n < min(len(words), len(before)) and words[-1 - n].lower() == before[-1 - n].lower():
+        n += 1
+    return n
+
+
+def after(screen, cy, row, end, start):
+    """The text after a word ending at END of ROW to the end of SCREEN, rows
+    joined by newlines, without the cursor's row (CY) past START."""
+    rest = screen[row][end:start] if row == cy and end <= start else screen[row][end:]
+    return '\n'.join([rest] + [line for r, line in enumerate(screen) if r > row and r != cy])
+
+
+def ranked(screen, cy, start, accept, before, cursor_row=True):
+    """[(row, match)] of the words on SCREEN that ACCEPT takes: first those
+    whose words before them on screen (across rows) match the most of the
+    words BEFORE, then the nearest (row CY, character START; above on a tie).
+    Not the word at START itself, nor any on the cursor's row unless
+    CURSOR_ROW."""
+    found, seen = [], []
+    for row, line in enumerate(screen):
+        if row == cy and not cursor_row:
+            continue
+        for m in WORD.finditer(line):
+            if not (row == cy and m.start() == start) and accept(m.group()):
+                found.append((-context(seen[-CONTEXT:], before), abs(row - cy), row > cy,
+                              abs(m.start() - start), row, m.start(), m))
+            seen.append(m.group())
+    return [(row, m) for *_, row, _, m in sorted(found, key=lambda f: f[:-1])]
+
+
+def candidates(screen, cy, start, typed):
+    """[(word, following)] for each word on SCREEN that completes TYPED (row CY
+    from character START), each once, best first (ranked); FOLLOWING is the
+    text after it (after)."""
+    before = WORD.findall(screen[cy][:start])[-CONTEXT:]
+    accept = lambda w: w.lower() != typed.lower() and smartcase(typed, w)
+    out, seen = [], set()
+    for row, m in ranked(screen, cy, start, accept, before):
+        if m.group() not in seen:
+            seen.add(m.group())
+            out.append((m.group(), after(screen, cy, row, m.end(), start)))
+    return out
+
+
+def next_chunk(following):
+    """(chunk, rest): the text up to the end of the next word in FOLLOWING, a
+    gap holding a line break made one space; None when no word is left."""
+    m = WORD.search(following)
+    if not m:
+        return None
+    gap = following[:m.start()]
+    if '\n' in gap:
+        gap = ' '
+    return gap + m.group(), following[m.end():]
+
+
+def continuations(pane, following):
+    """[(chunk, rest)] for what may come next after the text left of the
+    cursor, each once: the next words in FOLLOWING (where the completion came
+    from) first, then those after each other place on screen where the last
+    word left of the cursor is, best first (ranked by the words before it)."""
+    words = WORD.findall(pane.before)
+    found = [next_chunk(following)]
+    if words:
+        last = words[-1].lower()
+        for row, m in ranked(pane.screen, pane.cy, len(pane.before),
+                             lambda w: w.lower() == last, words[:-1][-CONTEXT:], cursor_row=False):
+            found.append(next_chunk(after(pane.screen, pane.cy, row, m.end(), 0)))
+    out, seen = [], set()
+    for chunk in found:
+        if chunk and chunk[0] not in seen:
+            seen.add(chunk[0])
+            out.append(chunk)
+    return out
+
+
+def shown(state):
+    """The text the completion puts left of the cursor in place of what was
+    typed: the chosen alternative of the last level, or with none chosen, the
+    level's own (what was typed, or what the level goes on from)."""
+    level = state['levels'][-1]
+    if level['index'] < len(level['alts']):
+        return level['alts'][level['index']]['text']
+    return level['none']
+
+
+# A backend: typed(pane, key) is (start, typed) for the word before the cursor
+# it takes, else None; complete(pane, start, typed) the alternatives for it,
+# best first, each {'text': what replaces typed, ...}; follow(pane, chosen)
+# those that go on from the chosen one, for Tab.
+
+class Screen:
+    """The words on the pane's screen."""
+    name = 'screen'
+
+    def typed(self, pane, key):
+        m = TYPED.search(pane.before)
+        if m and len(m.group()) >= (2 if key == 'tab' else 1):
+            return m.start(), m.group()
+        return None
+
+    def complete(self, pane, start, typed):
+        return [{'text': word + ' ', 'following': following}
+                for word, following in candidates(pane.screen, pane.cy, start, typed)]
+
+    def follow(self, pane, chosen):
+        return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}
+                for chunk, rest in continuations(pane, chosen['following'])]
+
+
+class Program:
+    """Tab on a word starting @ or /: left to the program."""
+    name = 'program'
+
+    def typed(self, pane, key):
+        token = re.search(r'\S*$', pane.before).group()
+        if key == 'tab' and token[:1] in ('@', '/'):
+            return len(pane.before) - len(token), token
+        return None
+
+    def complete(self, pane, start, typed):
+        return []
+
+
+class Paths:
+    """The files in the folder of a path starting ~/, ./, ../, // or /folder/."""
+    name = 'paths'
+
+    def typed(self, pane, key):
+        m = PATH_TYPED.search(pane.before)
+        return (m.start(), m.group()) if m else None
+
+    def complete(self, pane, start, typed):
+        path = typed[1:] if typed.startswith('//') else typed
+        cut = path.rindex('/') + 1
+        return self.entries(pane, path[:cut], path[cut:])
+
+    def follow(self, pane, chosen):
+        return self.entries(pane, chosen['text'], '') if chosen['text'].endswith('/') else []
+
+    def entries(self, pane, folder, part):
+        """The files in FOLDER whose names start with PART (smart case), by
+        name: FOLDER, the name, and a / for a folder, else a space."""
+        real = os.path.join(pane.cwd(), os.path.expanduser(folder))
+        try:
+            names = os.listdir(real)
+        except OSError:
+            return []
+        out = []
+        for name in sorted(names, key=str.lower):
+            shown_name = unicodedata.normalize('NFC', name)      # macOS keeps names decomposed
+            if (name.startswith('.') and not part.startswith('.')) or not smartcase(part, shown_name):
+                continue
+            end = '/' if os.path.isdir(os.path.join(real, name)) else ' '
+            out.append({'text': folder + shown_name + end})
+        return out
+
+
+BACKENDS = [Paths(), Program(), Screen()]
+BY_NAME = {backend.name: backend for backend in BACKENDS}
+
+
+class Pane:
+    def __init__(self, pane):
+        self.pane = pane
+        cx, cy, self.pid = map(int, tmux('display-message', '-p', '-t', pane,
+                                         '#{cursor_x} #{cursor_y} #{pane_pid}').split())
+        # -N keeps trailing spaces, so a space left of the cursor is seen.
+        self.screen = tmux('capture-pane', '-p', '-N', '-t', pane).split('\n')
+        self.cy = cy
+        self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
+
+    def cwd(self):
+        return tmux('display-message', '-p', '-t', self.pane, '#{pane_current_path}').strip()
+
+    def state_file(self):
+        server = tmux('display-message', '-p', '#{socket_path}').strip().replace('/', '%')
+        folder = os.path.join(tempfile.gettempdir(), f'tmux-dabbrev-{os.getuid()}')
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+        return os.path.join(folder, f'{server}{self.pane}.json')
+
+    def state(self):
+        try:
+            with open(self.state_file()) as f:
+                state = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if state and 'backend' in state and state.get('at') == [self.pid, self.cy, self.before]:
+            return state
+        return None
+
+    def save(self, state):
+        now = Pane(self.pane)
+        state['at'] = [now.pid, now.cy, now.before]
+        with open(self.state_file(), 'w') as f:
+            json.dump(state, f)
+
+    def replace(self, old, new):
+        """Turn the text OLD left of the cursor into NEW, and wait (briefly)
+        until the screen shows it."""
+        keep = 0
+        while keep < min(len(old), len(new)) and old[keep] == new[keep]:
+            keep += 1
+        if len(old) > keep:
+            tmux('send-keys', '-t', self.pane, '-N', str(len(old) - keep), 'BSpace')
+        if new[keep:]:
+            tmux('send-keys', '-t', self.pane, '-l', '--', new[keep:])
+        want = new[-12:]
+        end = time.monotonic() + 0.5
+        while time.monotonic() < end:
+            if Pane(self.pane).before.endswith(want):
+                return
+            time.sleep(0.02)
+
+    def send_tab(self):
+        tmux('send-keys', '-t', self.pane, 'Tab')
+
+
+def step(pane, state, change):
+    """Apply CHANGE to STATE, type the difference, remember the levels before
+    for undo."""
+    old = shown(state)
+    state.setdefault('undo', []).append(json.loads(json.dumps(state['levels'])))
+    change(state['levels'])
+    pane.replace(old, shown(state))
+    pane.save(state)
+
+
+def start(pane, key):
+    """Complete the word before the cursor to the best match of the first
+    backend that takes it; False when there is nothing to complete."""
+    for backend in BACKENDS:
+        found = backend.typed(pane, key)
+        if found:
+            break
+    else:
+        return False
+    alts = backend.complete(pane, *found)
+    if not alts:
+        return False
+    state = {'backend': backend.name,
+             'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
+    step(pane, state, lambda levels: levels[-1].update(index=0))
+    return True
+
+
+def expand(pane):
+    state = pane.state()
+    if not state:
+        start(pane, 'expand')
+        return
+    # Cycle the last level: its alternatives, then none.
+    level = state['levels'][-1]
+    step(pane, state, lambda levels: levels[-1].update(
+        index=(level['index'] + 1) % (len(level['alts']) + 1)))
+
+
+def tab(pane):
+    state = pane.state()
+    if state:
+        level = state['levels'][-1]
+        if level['index'] == len(level['alts']):        # none chosen: the first
+            step(pane, state, lambda levels: levels[-1].update(index=0))
+            return
+        chosen = level['alts'][level['index']]
+        alts = BY_NAME[state['backend']].follow(pane, chosen)
+        if alts:
+            step(pane, state, lambda levels: levels.append(
+                {'none': chosen['text'], 'alts': alts, 'index': 0}))
+        return
+    if not start(pane, 'tab'):
+        pane.send_tab()
+
+
+def undo(pane):
+    state = pane.state()
+    if not state or not state.get('undo'):
+        return
+    old = shown(state)
+    state['levels'] = state['undo'].pop()
+    pane.replace(old, shown(state))
+    pane.save(state)
+
+
+def bind():
+    """Bind the keys in @dabbrev-key and @dabbrev-undo-key without the prefix,
+    and Tab in the programs named in @dabbrev-tab-commands; unbind what was
+    bound before and no longer is."""
+    script = os.path.abspath(__file__)
+    programs = tmux('show-options', '-gqv', TAB_OPTION)
+    if programs == '' and not tmux('show-options', '-gq', TAB_OPTION):
+        programs = TAB_DEFAULT                  # unset; set to '' to leave Tab alone
+    programs = programs.split()
+    old = tmux('show-options', '-gqv', '@dabbrev-bound-keys').split()
+    keys = []
+    for action, (option, default) in KEYS.items():
+        key = tmux('show-options', '-gqv', option).strip() or default
+        tmux('bind-key', '-n', key, 'run-shell', f"{script} {action} '#{{pane_id}}'")
+        keys.append(key)
+    if programs:
+        match = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(map(re.escape, programs))
+        tmux('bind-key', '-n', 'Tab', 'if-shell', '-F', match,
+             f"run-shell \"{script} tab '#{{pane_id}}'\"", 'send-keys Tab')
+        keys.append('Tab')
+    for k in old:
+        if k not in keys:
+            tmux('unbind-key', '-n', k, check=False)
+    tmux('set-option', '-g', '@dabbrev-bound-keys', ' '.join(keys))
+
+
+if __name__ == '__main__':
+    if sys.argv[1:] == ['bind']:
+        bind()
+    else:
+        {'expand': expand, 'tab': tab, 'undo': undo}[sys.argv[1]](Pane(sys.argv[2]))
