@@ -190,8 +190,8 @@ def main(action, pane, client=None, command=None):
         leave(pane)
     elif action == 'paste':
         leave(pane)
-        tmux('set-buffer', '-b', 'ppi-link', '--', text)
-        tmux('paste-buffer', '-p', '-d', '-b', 'ppi-link', '-t', pane)
+        tmux('set-buffer', '-b', 'tmux-link', '--', text)
+        tmux('paste-buffer', '-p', '-d', '-b', 'tmux-link', '-t', pane)
     elif action == 'quote':
         copy(text)                              # tmux-quote-reply quotes the newest buffer
         subprocess.run([os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmux-quote-reply'), pane])
