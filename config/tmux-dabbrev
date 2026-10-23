@@ -35,12 +35,15 @@
 # at once.
 #
 #   ^WORD, ^ WORD (on the screen's words) only words that begin a line; the
-#                 ^ goes; -WORD the same for list items and .WORD for
-#                 sentence starts, else as before, the mark kept.
-#                 After "- " (or * • + 1. 1)), only the first words
-#                 of list items; after ". " (! ?), only words that begin a
-#                 sentence; those stay, and with no such match, all words.
-#                 After an anchor one letter is enough for Tab.
+#                 ^ goes. After "- " (or * • + 1. 1)), the list items that
+#                 start so, each whole (the rows it wraps onto too); after
+#                 ". " (! ?), only words that begin a sentence; those stay,
+#                 and with no such match, all words. -WORD and .WORD the
+#                 same, the mark gone (else as before, the mark kept); 2.
+#                 (or 2)) the items numbered so, whole.
+#                 =WORD only entities, those of more words first; the =
+#                 goes, and with none such, nothing. After an anchor one
+#                 letter is enough for Tab.
 #   ...WORD       (on the screen's words) everything from where the text
 #                 before ... leaves off on screen up to a word starting with
 #                 WORD, with what is on it (consumes.), line breaks as
@@ -94,6 +97,8 @@ import unicodedata
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
 LINE_TYPED = re.compile(r"(?:^|(?<=\s))\^ ?\w[\w'./-]*$")      # ^word, ^ word
+NUMBER_TYPED = re.compile(r'(?:^|(?<=\s))\d+[.)]$')              # 2. 2)
+LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins a list item
 LIST_LEAD = re.compile(r'(?:^|\s)(?:[-*•+]|\d+[.)])\s$')         # - word
 SENTENCE_LEAD = re.compile(r'[.!?]["\'’”)\]]*\s$')               # . word
 UPTO_TYPED = re.compile(r"(?:^|(?<=\s))\.\.\.\w[\w'./-]*$")      # ...word
@@ -294,9 +299,46 @@ def sentence_start(pane, row, a):
     return not above or bool(re.search(r'[.!?:]["\'’”)\]]*$', above))
 
 
-# A mark just before a word (-Wh, .th): only the words at such places, and the
-# mark goes; with none such, all words, the mark kept (-Wall, .bashrc).
-MARKS = {'-': list_item, '.': sentence_start}
+def item_at(pane, row, a):
+    """(text, following): the list item whose text starts at character A of
+    ROW, with the rows it wraps onto (indented as far; up to a blank row or
+    another item), joined by spaces, and the text after it (after)."""
+    parts, last = [pane.screen[row][a:].strip()], row
+    for r in range(row + 1, len(pane.screen)):
+        line = pane.screen[r]
+        if r == pane.cy or not line.strip() or len(line) - len(line.lstrip()) < a or LIST_MARK.match(line):
+            break
+        parts.append(line.strip())
+        last = r
+    return ' '.join(parts), after(pane.screen, pane.cy, last, len(pane.screen[last]), 0)
+
+
+def list_items(pane, start, typed, number=None):
+    """Alternatives for the list items on screen whose first word starts with
+    TYPED (smart case), or with NUMBER (digits) those numbered so: each whole
+    (item_at), best first (ranked)."""
+    if number is None:
+        where = list_item
+        accept = lambda text, kind: kind == 'word' and smartcase(typed, text) and text
+    else:
+        numbered = re.compile(r'\W*?' + re.escape(number) + r'[.)]\s+')
+        where = lambda pane, row, a: bool(numbered.fullmatch(pane.screen[row][:a]))
+        accept = lambda text, kind: kind == 'word' and text
+    before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
+    out, seen = [], set()
+    for text, row, end in ranked(pane, start, accept, before, where=where):
+        item, following = item_at(pane, row, end - len(text))
+        if item not in seen:
+            seen.add(item)
+            out.append({'text': item + ' ', 'following': following})
+    return out
+
+
+# A mark just before a word (-Wh, .th): the list items that start so, whole,
+# or the words that begin a sentence, and the mark goes; with none such, all
+# words, the mark kept (-Wall, .bashrc).
+MARKS = {'-': lambda pane, start, word: list_items(pane, start, word),
+         '.': lambda pane, start, word: Screen.words(pane, start, word, sentence_start)}
 
 
 def ranked(pane, start, accept, before, cursor_row=True, where=None):
@@ -334,12 +376,13 @@ def ranked(pane, start, accept, before, cursor_row=True, where=None):
     return [(text, row, b) for *_, row, _, text, b in sorted(found, key=key)]
 
 
-def candidates(pane, start, typed, where=None):
+def candidates(pane, start, typed, where=None, spans_only=False):
     """[(text, following)] for each word or coloured span on the pane's screen
     that completes TYPED (from character START of the cursor's row), each
     once, best first (ranked); FOLLOWING is the text after it (after). A span
     may also complete the word with what is before it (#12 of #1234), or what
-    is before it alone (TYPED empty: [" of ["a1f3"])."""
+    is before it alone (TYPED empty: [" of ["a1f3"]). WHERE as in ranked;
+    SPANS_ONLY: entities only."""
     before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
     token = re.search(r'\S*$', pane.before).group()
     lead = token[:len(token) - len(typed)]
@@ -347,7 +390,7 @@ def candidates(pane, start, typed, where=None):
     def accept(text, kind):
         if kind == 'span' and lead and smartcase(token, text):
             text = text[len(lead):]
-        elif kind == 'path' or not typed or not smartcase(typed, text):
+        elif kind == 'path' or (spans_only and kind != 'span') or not typed or not smartcase(typed, text):
             return None
         return text if text.lower() != typed.lower() else None
     out, seen = [], set()
@@ -508,15 +551,15 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
-        m = UPTO_TYPED.search(pane.before) or LINE_TYPED.search(pane.before)
+        m = UPTO_TYPED.search(pane.before) or LINE_TYPED.search(pane.before) or NUMBER_TYPED.search(pane.before)
         if m:
             return m.start(), m.group()
         least = 2 if key == 'tab' else 1
         m = TYPED.search(pane.before)
         if m:
             lead = pane.before[:m.start()]
-            mark = re.search(r'(?:^|(?<=\s))[-.]$', lead)
-            if mark:                                # -word, .word: see MARKS
+            mark = re.search(r'(?:^|(?<=\s))[-.=]$', lead)
+            if mark:                                # -word, .word (MARKS), =word
                 return m.start() - 1, mark.group() + m.group()
             anchored = LIST_LEAD.search(lead) or SENTENCE_LEAD.search(lead)
             # After an anchor the matches are few: one letter is enough.
@@ -531,18 +574,27 @@ class Screen:
         if typed.startswith('^'):                   # line starts only; the ^ goes
             word = typed.lstrip('^ ')
             return self.words(pane, start + len(typed) - len(word), word, line_start)
+        if typed[:1] == '=':                        # =word: entities only, of more words first
+            alts = self.words(pane, start + 1, typed[1:], spans_only=True)
+            return sorted(alts, key=lambda alt: ' ' not in alt['text'].rstrip())
+        if NUMBER_TYPED.fullmatch(typed):            # 2.: the items numbered so, whole
+            alts = list_items(pane, start, '', number=typed[:-1])
+            return [{**alt, 'text': typed + ' ' + alt['text']} for alt in alts] or self.words(pane, start, typed)
         if typed[:1] in MARKS:                      # -word, .word: the mark gone; else as before
             word = typed[1:]
-            return self.words(pane, start + 1, word, MARKS[typed[0]]) or [
+            return MARKS[typed[0]](pane, start + 1, word) or [
                 {**alt, 'text': typed[0] + alt['text']} for alt in self.words(pane, start + 1, word)]
         lead = pane.before[:start]                  # - and . stay: they are text too
-        where = list_item if LIST_LEAD.search(lead) else sentence_start if SENTENCE_LEAD.search(lead) else None
-        return self.words(pane, start, typed, where) or (self.words(pane, start, typed) if where else [])
+        if LIST_LEAD.search(lead):
+            return list_items(pane, start, typed) or self.words(pane, start, typed)
+        if SENTENCE_LEAD.search(lead):
+            return self.words(pane, start, typed, sentence_start) or self.words(pane, start, typed)
+        return self.words(pane, start, typed)
 
     @staticmethod
-    def words(pane, start, typed, where=None):
+    def words(pane, start, typed, where=None, spans_only=False):
         return [{'text': text + ' ', 'following': following}
-                for text, following in candidates(pane, start, typed, where)]
+                for text, following in candidates(pane, start, typed, where, spans_only)]
 
     def follow(self, pane, start, chosen):
         return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}

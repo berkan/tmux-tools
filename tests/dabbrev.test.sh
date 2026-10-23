@@ -249,16 +249,27 @@ typed 'ok. Thatc'; dab expand
 expect "  ... none such: all words" 'ok. Thatcher ' "$(line)"
 editor 'say Whale here' '- Which one' '  * Whatever' '  2. Whence'
 typed '- Wh'
-expect "- : only the first words of list items, the - kept" '- Which |- Whatever |- Whence |- Wh|' "$(cycle 1 2 3 4)"
+expect "- : list items that start so, whole, the - kept" '- Which one |- Whatever |- Whence |- Wh|' "$(cycle 1 2 3 4)"
 editor 'say Whale here' '- Which one'
 typed '- Whal'; dab expand
 expect "  ... none such: all words" '- Whale ' "$(line)"
-editor 'say Whale here' '- Which one is it'
-typed '- Wh'; dab tab tab
-expect "  ... and Tab goes on in the item" '- Which one ' "$(line)"
+editor 'say Whale here' '- Which one is' '  wrapped on' '  and on' '- Next item' 'after'
+typed '- Wh'; dab tab
+expect "  ... with the lines it wraps onto" '- Which one is wrapped on and on ' "$(line)"
+dab tab
+expect "  ... then Tab goes on after it" '- Which one is wrapped on and on Next ' "$(line)"
+editor '- Which one' '' 'not of it'
+typed '-W'; dab tab
+expect "  ... a blank line ends it" 'Which one ' "$(line)"
+editor '1. First thing' '2. Second thing' '   wrapped' '3. Third' 'and 2. Other' '  2) Again here'
+typed '2.'
+expect "N. : the items numbered so, whole" '2. Second thing wrapped |2. Again here |2.|' "$(cycle 1 2 3)"
+editor 'version 2.5 here'
+typed '2.'; dab tab
+expect "  ... no such item: as before" '2.5 ' "$(line)"
 
 LIST=('Thanks first' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
-for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which ' '. T|. Thanks ' '-W|Which ' '.t|Thanks '; do
+for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which one ' '. T|. Thanks ' '-W|Which one ' '.t|Thanks '; do
     editor "${LIST[@]}"
     typed "${t%%|*}"; dab tab
     expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
@@ -275,6 +286,17 @@ expect "  ... with none such: as before, the . kept" 'x .thatrc ' "$(line)"
 editor "${LIST[@]}"
 typed 'W'; dab tab
 expect "  ... one letter alone still goes through" '1 W' "$(tabs) $(line)"
+
+ENT=($'a \e[36mWhen\e[39m arrives' 'plain Whale and When' $'\e[34mWhen /someone/ wishes /p/\e[39m is it')
+editor "${ENT[@]}"
+typed '=wh'
+expect "=word: only entities, those of more words first, the = gone" 'When /someone/ wishes /p/ |When |=wh|' "$(cycle 1 2 3)"
+editor "${ENT[@]}"
+typed '=w'; dab tab tab
+expect "  ... one letter is enough; Tab goes on after it" 'When /someone/ wishes /p/ is ' "$(line)"
+editor "${ENT[@]}"
+typed '=zz'; dab tab
+expect "  ... none such: nothing, Tab goes through" '1 =zz' "$(tabs) $(line)"
 
 echo "...word: up to the word"
 PARA=('we keep them in ppi for now, while' '  you are changing them. Move them out once' '  they settle, so ppi consumes. Then more')
