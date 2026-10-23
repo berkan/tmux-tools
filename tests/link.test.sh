@@ -142,6 +142,22 @@ expect "@dabbrev-entities applies here too (no camelcase)" "1 0" "$(in_mode) $(t
 tmux send -t "$PANE" -X cancel
 tmux set -gu @dabbrev-entities
 
+echo "the bindings' test for a selection (@ppi_selected in tmux.conf)"
+# Where jump-click lands a selection is begun; tmux 3.4 counts it as present
+# at once, 3.5 not until the cursor moves. Neither is a selection here.
+eval "tmux $(grep -E "^set -g @ppi_selected " "$HERE/../config/tmux.conf")"
+selected() { tmux display -p -t "$PANE" '#{E:@ppi_selected}'; }
+prog 'some words here' 'more'
+at 0 2
+expect "copy mode, nothing selected: no" 0 "$(selected)"
+tmux send -t "$PANE" -X begin-selection
+expect "a selection begun, the cursor not moved: no" 0 "$(selected)"
+tmux send -t "$PANE" -X cursor-right
+expect "  ... moved along the row: yes" 1 "$(selected)"
+tmux send -t "$PANE" -X cursor-left; tmux send -t "$PANE" -X cursor-down
+expect "  ... moved down only: yes" 1 "$(selected)"
+tmux send -t "$PANE" -X cancel
+
 echo "open"
 mkdir -p "$SCRATCH/o"
 TMUX_TMPDIR="$SCRATCH/o" tmux -f /dev/null new-session -d -x 100 -y 11 \
