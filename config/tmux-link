@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+# tmux-link open|copy|quote|paste|target PANE [CLIENT] [COMMAND] — act on the
+# hyperlink (OSC 8) under PANE's copy-mode cursor: on its target, not the
+# text shown. Claude Code links each file it names, showing a short path
+# (drafts/x.md) for the full one (file:///Users/me/notes/drafts/x.md); a
+# file link's target is its path.
+#
+#   open    a file or folder: $VISUAL (else $EDITOR, else vi) in a popup on
+#           CLIENT; one not in this container: a message. Any other link:
+#           nothing in a container can open it (no browser), so it is
+#           copied, with a message.
+#   copy    to tmux's buffer (and so the clipboard), leaving copy mode
+#   quote   re: "<target>" -- typed into PANE, as tmux-quote-reply does
+#   paste   typed into PANE (bracketed paste), leaving copy mode
+#   target  printed
+#
+# Off a link, COMMAND (a copy-mode command such as other-end) is run instead,
+# so the key keeps its own meaning there. Bound in tmux.conf to o, Enter, y,
+# r and p in copy mode, when nothing is selected.
+#
+# The link is read off the screen (capture-pane -e). Before tmux 3.5 (the
+# containers have 3.4) copy mode keeps no links, so there the pane leaves
+# copy mode to be read, and off a link goes back into it, at the same place.
+import os
+import re
+import shlex
+import subprocess
+import sys
+import unicodedata
+import urllib.parse
+
+OSC8 = re.compile(r'\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)')
+ESCAPE = re.compile(r'\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
+
+
+def tmux(*args, check=True):
+    return subprocess.run(['tmux', *args], check=check, text=True,
+                          stdout=subprocess.PIPE).stdout
+
+
+def cell_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in 'WF' else 1
+
+
+def link_at(line, cx):
+    """The link target at cell CX of LINE as capture-pane -e gives it, or ''."""
+    link, col, pos = '', 0, 0
+    while pos < len(line):
+        m = OSC8.match(line, pos) or ESCAPE.match(line, pos)
+        if m:
+            if m.re is OSC8:
+                link = m.group(1)
+            pos = m.end()
+            continue
+        width = cell_width(line[pos])
+        if col <= cx < col + max(width, 1):
+            return link
+        col += width
+        pos += 1
+    return ''
+
+
+def links_in_copy_mode():
+    """Whether tmux keeps links in copy mode (3.5 on)."""
+    m = re.match(r'(\d+)\.(\d+)', tmux('display-message', '-p', '#{version}'))
+    return not m or (int(m[1]), int(m[2])) >= (3, 5)
+
+
+def char_index(line, col):
+    """The index in LINE (plain text) of the character at cell COL."""
+    at = 0
+    for i, ch in enumerate(line):
+        if at >= col:
+            return i
+        at += cell_width(ch)
+    return len(line)
+
+
+def back_to(pane, place, line):
+    """Copy mode again with its cursor at PLACE (cx, cy, scroll), LINE being
+    the cursor's row: the view scrolled back as far, then the cursor moved,
+    checked and moved again (it moves by character, not cell)."""
+    cx, cy, scroll = place
+    tmux('copy-mode', '-t', pane)
+    if scroll:
+        tmux('send-keys', '-t', pane, '-X', '-N', str(scroll), 'scroll-up')
+    for cmd in ['top-line', 'start-of-line']:
+        tmux('send-keys', '-t', pane, '-X', cmd)
+    plain = ESCAPE.sub('', OSC8.sub('', line))
+    for _ in range(4):
+        x, y = map(int, tmux('display-message', '-p', '-t', pane,
+                             '#{copy_cursor_x} #{copy_cursor_y}').split())
+        if y != cy:
+            count, cmd = cy - y, 'cursor-down'
+        else:
+            count, cmd = char_index(plain, cx) - char_index(plain, x), 'cursor-right'
+        if not count:
+            break
+        if count < 0:
+            count, cmd = -count, {'cursor-down': 'cursor-up', 'cursor-right': 'cursor-left'}[cmd]
+        tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
+
+
+def target(pane, keep_mode):
+    """The target of the link under PANE's copy cursor, a file link's as its
+    path; '' off a link. Copy mode may be left to read it (before tmux 3.5):
+    then it is gone back to when there is no link or KEEP_MODE."""
+    place = tuple(map(int, tmux('display-message', '-p', '-t', pane,
+                                '#{copy_cursor_x} #{copy_cursor_y} #{scroll_position}').split()))
+    cx, cy, scroll = place
+    left = not links_in_copy_mode()
+    if left:
+        tmux('send-keys', '-t', pane, '-X', 'cancel')
+    row = str(cy - scroll)                      # 0 is the top of the screen; history is above
+    line = tmux('capture-pane', '-p', '-e', '-N', '-t', pane, '-S', row, '-E', row).rstrip('\n')
+    link = link_at(line, cx)
+    if left and (keep_mode or not link):
+        back_to(pane, place, line)
+    url = urllib.parse.urlsplit(link)
+    return urllib.parse.unquote(url.path) if url.scheme == 'file' else link
+
+
+def leave(pane):
+    if tmux('display-message', '-p', '-t', pane, '#{pane_in_mode}').strip() == '1':
+        tmux('send-keys', '-t', pane, '-X', 'cancel')
+
+
+def copy(text):
+    # -w also sets the clipboard, through the client's terminal; with none
+    # attached (a test) tmux refuses it, so without.
+    if subprocess.run(['tmux', 'set-buffer', '-w', '--', text], stderr=subprocess.DEVNULL).returncode:
+        tmux('set-buffer', '--', text)
+
+
+def open_(pane, client, text):
+    if not text.startswith('/'):
+        copy(text)
+        tmux('display-message', '-c', client, f'Nothing here opens it (no browser); copied: {text}')
+    elif not os.path.exists(text):
+        tmux('display-message', '-c', client, f'Not in this container: {text}')
+    else:
+        editor = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
+        folder = text if os.path.isdir(text) else os.path.dirname(text)
+        tmux('display-popup', '-c', client, '-t', pane, '-E', '-w', '90%', '-h', '90%',
+             '-d', folder, shlex.join([*editor, text]))
+
+
+def main(action, pane, client=None, command=None):
+    text = target(pane, keep_mode=action in ('target', 'open'))
+    if action == 'target':
+        print(text)
+    elif not text:
+        if command:
+            tmux('send-keys', '-t', pane, '-X', command)
+    elif action == 'open':
+        open_(pane, client, text)
+    elif action == 'copy':
+        copy(text)
+        leave(pane)
+    elif action == 'paste':
+        leave(pane)
+        tmux('set-buffer', '-b', 'ppi-link', '--', text)
+        tmux('paste-buffer', '-p', '-d', '-b', 'ppi-link', '-t', pane)
+    elif action == 'quote':
+        copy(text)                              # tmux-quote-reply quotes the newest buffer
+        subprocess.run([os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmux-quote-reply'), pane])
+
+
+if __name__ == '__main__':
+    main(*sys.argv[1:])
