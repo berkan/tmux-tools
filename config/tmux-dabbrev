@@ -50,7 +50,10 @@
 #                 spaces; ...$ to the end of the line, ...$$ to the end of
 #                 the block (a blank row or the next list item), .... (or
 #                 ...) to the end of the sentence, ...? ...! to the next
-#                 such mark; .. does as ..., and a space may follow either: from where the last Tab took its words, else from
+#                 such mark; .. does as ..., and a space may follow either.
+#                 After an anchored query (^T..$$, -W ..cl): each match of
+#                 the query, taken on to its first such end; M-/ the next
+#                 match. Otherwise: from where the last Tab took its words, else from
 #                 where the words before ... are. M-/ goes on to the next
 #                 such word; Tab after it, word by word.
 #
@@ -109,6 +112,9 @@ SENTENCE_LEAD = re.compile(r'[.!?]["\'’”)\]]*\s$')               # . word
 # next such mark.
 UPTO = r"\.\.\.? ?(\w[\w'./-]*|\$\$?|[.!?])"
 UPTO_TYPED = re.compile(r"(?:^|(?<=\s))" + UPTO + "$")
+# An anchored query before it (^T..$$, -W ..cl): each match of the query on
+# screen, taken on to its first such end.
+QUERY_UPTO = re.compile(r"(?:^|(?<=\s))(?P<query>(?:\^ ?|[-.=])\w[\w'/-]*) ?(?P<op>" + UPTO + ")$")
 BLOCK_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')       # a blank row, a list item
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
@@ -443,6 +449,26 @@ def continuations(pane, following):
     return out
 
 
+def ends(following, target):
+    """Where in FOLLOWING the text up to TARGET (as in up_to) ends, in order."""
+    if target == '$':
+        m = re.search(r'\S[^\n]*', following)
+        return [m.end()] if m else []
+    if target == '$$':
+        m = BLOCK_END.search(following)
+        return [m.start() if m else len(following.rstrip())]
+    if target in '.?!':                         # . a sentence's end; ? ! that mark
+        marks = '.!?' if target == '.' else target
+        return [m.end() for m in re.finditer(r'[' + re.escape(marks) + r']["\'’”)\]]*(?=\s|$)', following)]
+    return [m.start() + len(re.match(r'\S*', following[m.start():]).group())
+            for m in WORD.finditer(following) if smartcase(target, m.group())]
+
+
+def taken(following, end):
+    """FOLLOWING up to END, its line breaks one space, without trailing space."""
+    return re.sub(r'\s*\n\s*', ' ', following[:end]).rstrip()
+
+
 def up_to(pane, start, word):
     """...WORD: the text on screen from where the text left of START leaves
     off up to a word that starts with WORD (smart case) and what is on it
@@ -473,21 +499,9 @@ def up_to(pane, start, word):
     for following in sources:
         if tail and following.lstrip(' ').startswith(tail):
             following = following.lstrip(' ')[len(tail):]
-        if word == '$':
-            m = re.search(r'\S[^\n]*', following)
-            ends = [m.end()] if m else []
-        elif word == '$$':
-            m = BLOCK_END.search(following)
-            ends = [m.start() if m else len(following.rstrip())]
-        elif word in '.?!':                     # . a sentence's end; ? ! that mark
-            marks = '.!?' if word == '.' else word
-            ends = [m.end() for m in re.finditer(r'[' + re.escape(marks) + r']["\'’”)\]]*(?=\s|$)', following)]
-        else:
-            ends = [m.start() + len(re.match(r'\S*', following[m.start():]).group())
-                    for m in WORD.finditer(following) if smartcase(word, m.group())]
-        for end in ends:
-            text = re.sub(r'\s*\n\s*', ' ', following[:end])
-            text = (text.lstrip() if anchor[-1:].isspace() else text).rstrip() + ' '
+        for end in ends(following, word):
+            text = taken(following, end)
+            text = (text.lstrip() if anchor[-1:].isspace() else text) + ' '
             if text not in seen:
                 seen.add(text)
                 out.append({'text': text, 'following': following[end:]})
@@ -574,7 +588,8 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
-        m = UPTO_TYPED.search(pane.before) or LINE_TYPED.search(pane.before) or NUMBER_TYPED.search(pane.before)
+        m = (QUERY_UPTO.search(pane.before) or UPTO_TYPED.search(pane.before)
+             or LINE_TYPED.search(pane.before) or NUMBER_TYPED.search(pane.before))
         if m:
             return m.start(), m.group()
         least = 2 if key == 'tab' else 1
@@ -594,6 +609,9 @@ class Screen:
     def complete(self, pane, start, typed):
         if typed.startswith('..'):
             return up_to(pane, start, re.fullmatch(UPTO, typed).group(1))
+        m = QUERY_UPTO.fullmatch(typed)
+        if m:                                       # ^T..$$: each match of ^T, taken on
+            return self.query_up_to(pane, start, m.group('query'), re.fullmatch(UPTO, m.group('op')).group(1))
         if typed.startswith('^'):                   # line starts only; the ^ goes
             word = typed.lstrip('^ ')
             return self.words(pane, start + len(typed) - len(word), word, line_start)
@@ -613,6 +631,26 @@ class Screen:
         if SENTENCE_LEAD.search(lead):
             return self.words(pane, start, typed, sentence_start) or self.words(pane, start, typed)
         return self.words(pane, start, typed)
+
+    def query_up_to(self, pane, start, query, target):
+        """The matches of QUERY (typed from START), as if the cursor were
+        after it, each taken on to its first end for TARGET (ends): one
+        alternative a match, so M-/ goes on to the next."""
+        before, pane.before = pane.before, pane.before[:start + len(query)]
+        try:
+            alts = self.complete(pane, start, query)
+        finally:
+            pane.before = before
+        out, seen = [], set()
+        for alt in alts:
+            following = alt.get('following')
+            found = ends(following, target) if following is not None else []
+            if found:
+                text = alt['text'].rstrip() + taken(following, found[0]) + ' '
+                if text not in seen:
+                    seen.add(text)
+                    out.append({'text': text, 'following': following[found[0]:]})
+        return out
 
     @staticmethod
     def words(pane, start, typed, where=None, spans_only=False):

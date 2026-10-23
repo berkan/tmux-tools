@@ -363,6 +363,24 @@ expect "..!: to the next !" 'ask is it so? yes! ' "$(line)"
 editor 'we ask is it so? yes! see file.py now. done' 'x'
 typed 'see ...'; dab tab
 expect "  ... a . inside a word ends no sentence" 'see file.py now. ' "$(line)"
+BLOCK=('The other direction: a pattern without claims, such' '  as When /p/ is, matches claims. That is in' '  prelude.tcl: if not, it queries' '' 'Then later')
+WHOLE='The other direction: a pattern without claims, such as When /p/ is, matches claims. That is in prelude.tcl: if not, it queries '
+for q in '^T..$$' '^T ..$$' '^ T ...$$'; do
+    editor "${BLOCK[@]}"
+    typed "$q"; dab tab
+    expect "${q}: an anchored query before .. is completed first" "$WHOLE" "$(line)"
+done
+editor "${BLOCK[@]}"
+typed '^T..$$'; dab tab expand
+expect "  ... M-/: the next block that starts so" 'Then later ' "$(line)"
+dab expand
+expect "  ... past the last: what was typed" '^T..$$' "$(line)"
+BLOCK2=('The pattern has claims in it' 'x' 'That one claims too' '' 'Then later')
+editor "${BLOCK2[@]}"
+typed '^T ..cl'; dab tab
+expect "  ... with any end: the first in each" 'The pattern has claims ' "$(line)"
+dab expand
+expect "  ... M-/: the next that starts so, not the next end" 'That one claims ' "$(line)"
 editor "${PARA[@]}"
 typed '...cons'; dab tab
 expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
