@@ -7,20 +7,28 @@
 # in BACKENDS whose trigger matches the text before the cursor:
 #
 #   paths         a word starting ~/, ./, ../, // (for /: alone, / is the
-#                 program's commands) or /folder/: the files in that folder,
-#                 relative to the pane's directory. A file ends in a space, a
-#                 folder in /. Dotfiles only when what was typed starts with a
-#                 dot. Tab after a folder: what is in it.
+#                 program's commands) or /folder/: first the paths on screen
+#                 that start with it (ranked as words are; ~/ and /Users/me/
+#                 are one), then the files in its folder, relative to the
+#                 pane's directory. A file ends in a space, a folder in /.
+#                 Dotfiles only when what was typed starts with a dot. Tab
+#                 after a folder: what is in it, the same way.
 #   program       Tab on a word starting @ or /: sent on to the program (its
 #                 own file and command completion).
-#   screen        the words on the pane's screen (not the scrollback), below.
+#   screen        the words on the pane's screen (not the scrollback), and
+#                 its coloured spans: runs of text in a style of their own,
+#                 such as an id or a path, not a whole line; below.
 #
 # A completion from the screen ends in a space, so the next press can follow
 # at once.
 #
 #   expand (M-/)  the best word on screen that starts with what was typed:
-#                 one after the words typed before it, as many as possible,
-#                 then the nearest. Again, the next best replaces it, and past
+#                 the coloured spans before any word (and only they for
+#                 punctuation alone, such as ["); within each, one after the
+#                 words typed before it, as many as possible, then in the
+#                 order in @dabbrev-span-order for the spans, @dabbrev-order
+#                 for the rest (ORDERS; default for both: nearest the middle
+#                 of the screen). Again, the next best replaces it, and past
 #                 the last, what was typed comes back. After a Tab, the same
 #                 for the words that Tab added: the other words that follow
 #                 the word before them elsewhere on screen; past the last,
@@ -28,7 +36,9 @@
 #                 a capital; the word goes in as it is on screen.
 #   tab (Tab)     the same first completion; again, the word that follows it
 #                 on screen, with what is between them (a line break as a
-#                 space), and so on, from where the last M-/ chose. Tab is
+#                 space), and so on, from where the last M-/ chose. On a
+#                 word that has no longer match on screen, Tab goes on at
+#                 once with the words after it elsewhere on screen. Tab is
 #                 sent on to the program instead when there is nothing to
 #                 complete: no backend takes the word (for the screen, under
 #                 two letters before the cursor) or it has no match.
@@ -58,9 +68,28 @@ import unicodedata
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
+SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
+ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
+DEFAULT = (None, None, frozenset())             # (foreground, background, attributes)
 KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?')}
 TAB_OPTION, TAB_DEFAULT = '@dabbrev-tab-commands', 'claude codex pi node agy gemini'
 CONTEXT = 3                     # words before what was typed that rank a match
+# The order of matches that rank alike otherwise, named in @dabbrev-order for
+# words and paths and @dabbrev-span-order for coloured spans:
+# the sort key of the match at character A of ROW, START being where what was
+# typed starts on the cursor's row and COUNT how often the match is on screen.
+ORDERS = {
+    # nearest the middle row of the screen; of two as far, the lower
+    'middle': lambda pane, row, a, start, count: (abs(row - pane.middle), row < pane.middle, a),
+    # the most often on screen, then as middle
+    'frequent': lambda pane, row, a, start, count: (-count, abs(row - pane.middle), row < pane.middle, a),
+    # nearest the cursor; of two rows as far, the upper
+    'cursor': lambda pane, row, a, start, count: (abs(row - pane.cy), row > pane.cy, abs(a - start)),
+    # reading order
+    'top': lambda pane, row, a, start, count: (row, a),
+}
+ORDER_OPTIONS = {False: '@dabbrev-order', True: '@dabbrev-span-order'}     # by: is a span
+ORDER_DEFAULT = 'middle'
 
 
 def tmux(*args, check=True):
@@ -106,35 +135,134 @@ def after(screen, cy, row, end, start):
     return '\n'.join([rest] + [line for r, line in enumerate(screen) if r > row and r != cy])
 
 
-def ranked(screen, cy, start, accept, before, cursor_row=True):
-    """[(row, match)] of the words on SCREEN that ACCEPT takes: first those
-    whose words before them on screen (across rows) match the most of the
-    words BEFORE, then the nearest (row CY, character START; above on a tie).
-    Not the word at START itself, nor any on the cursor's row unless
-    CURSOR_ROW."""
+def sgr(style, params):
+    """STYLE (foreground, background, attributes) after an SGR sequence with
+    PARAMS."""
+    fg, bg, attrs = style
+    ps = re.split('[;:]', params)
+    i = 0
+    while i < len(ps):
+        p = int(ps[i]) if ps[i].isdigit() else 0
+        if p == 0:
+            fg, bg, attrs = DEFAULT
+        elif p in (38, 48):                     # 38;5;N or 38;2;R;G;B
+            n = 2 if ps[i + 1:i + 2] == ['5'] else 4
+            colour = ';'.join(ps[i + 1:i + 1 + n])
+            fg, bg = (colour, bg) if p == 38 else (fg, colour)
+            i += n
+        elif 30 <= p <= 37 or 90 <= p <= 97:
+            fg = str(p)
+        elif 40 <= p <= 47 or 100 <= p <= 107:
+            bg = str(p)
+        elif p == 39:
+            fg = None
+        elif p == 49:
+            bg = None
+        elif 1 <= p <= 9:
+            attrs = attrs | {p}
+        elif 21 <= p <= 29:
+            attrs = attrs - ({1, 2} if p == 22 else {p - 20})
+        i += 1
+    return fg, bg, attrs
+
+
+def styled(line):
+    """[(character, style)] of LINE as capture-pane -e gives it."""
+    out, style, pos = [], DEFAULT, 0
+    for m in ESCAPE.finditer(line):
+        out += [(ch, style) for ch in line[pos:m.start()]]
+        pos = m.end()
+        if m.group(1) is not None:
+            style = sgr(style, m.group(1))
+    return out + [(ch, style) for ch in line[pos:]]
+
+
+def spans(plain, escaped):
+    """[(start, end)] in PLAIN of the runs of text in a style of their own (not
+    the default), trimmed of spaces and of punctuation at the end (**swiz:**
+    in Markdown); ESCAPED is the line with its escapes. Not a run that is all
+    the line's text, as a diff line or a grey one is."""
+    cells = styled(escaped)
+    if ''.join(ch for ch, _ in cells).rstrip() != plain.rstrip():
+        return []                               # the screen changed between the captures
+    out, i = [], 0
+    while i < len(cells):
+        j = i
+        while j < len(cells) and cells[j][1] == cells[i][1]:
+            j += 1
+        text = plain[i:j]
+        a, b = i + len(text) - len(text.lstrip()), i + len(text.rstrip().rstrip('.,:;!?'))
+        if cells[i][1] != DEFAULT and b - a >= 2 and plain[a:b] != plain.strip():
+            out.append((a, b))
+        i = j
+    return out
+
+
+def paths(line):
+    """[(start, end)] of what looks like a path in LINE: ~/, ./, ../ or /
+    and what follows up to a space, quote or bracket, without punctuation
+    after it."""
+    out = []
+    for m in SCREEN_PATH.finditer(line):
+        b = m.start() + len(m.group().rstrip('.!?'))
+        if b - m.start() >= 2:
+            out.append((m.start(), b))
+    return out
+
+
+def ranked(pane, start, accept, before, cursor_row=True):
+    """[(text, row, end)] for the things on the pane's screen (words, coloured
+    spans, paths) that ACCEPT(text, kind) turns into a TEXT: the coloured
+    spans before the rest, and in each, first those whose words before them
+    on screen (across rows) match the most of the words BEFORE, then in the
+    pane's order for them (ORDERS; START: where what was typed starts on the
+    cursor's row; a text counts as often as it is taken here). Not what is at
+    START, nor anything on the cursor's row unless CURSOR_ROW."""
     found, seen = [], []
-    for row, line in enumerate(screen):
-        if row == cy and not cursor_row:
-            continue
-        for m in WORD.finditer(line):
-            if not (row == cy and m.start() == start) and accept(m.group()):
-                found.append((-context(seen[-CONTEXT:], before), abs(row - cy), row > cy,
-                              abs(m.start() - start), row, m.start(), m))
-            seen.append(m.group())
-    return [(row, m) for *_, row, _, m in sorted(found, key=lambda f: f[:-1])]
+    for row, line in enumerate(pane.screen):
+        words = list(WORD.finditer(line))
+        k = 0
+        for a, b, kind in pane.items(row):
+            while k < len(words) and words[k].end() <= a:
+                seen.append(words[k].group())
+                k += 1
+            if row == pane.cy and (not cursor_row or a <= start < b or a == start):
+                continue
+            text = accept(line[a:b], kind)
+            if text:
+                found.append((kind != 'span', -context(seen[-CONTEXT:], before), row, a, text, b))
+        seen += [m.group() for m in words[k:]]
+    counts = {}
+    for *_, text, _ in found:
+        counts[text] = counts.get(text, 0) + 1
+    def key(f):
+        group, ctx, row, a, text, _ = f
+        order = ORDERS[pane.order(not group)]
+        return (group, ctx, *order(pane, row, a, start, counts[text]), row, a, text)
+    return [(text, row, b) for *_, row, _, text, b in sorted(found, key=key)]
 
 
-def candidates(screen, cy, start, typed):
-    """[(word, following)] for each word on SCREEN that completes TYPED (row CY
-    from character START), each once, best first (ranked); FOLLOWING is the
-    text after it (after)."""
-    before = WORD.findall(screen[cy][:start])[-CONTEXT:]
-    accept = lambda w: w.lower() != typed.lower() and smartcase(typed, w)
+def candidates(pane, start, typed):
+    """[(text, following)] for each word or coloured span on the pane's screen
+    that completes TYPED (from character START of the cursor's row), each
+    once, best first (ranked); FOLLOWING is the text after it (after). A span
+    may also complete the word with what is before it (#12 of #1234), or what
+    is before it alone (TYPED empty: [" of ["a1f3"])."""
+    before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
+    token = re.search(r'\S*$', pane.before).group()
+    lead = token[:len(token) - len(typed)]
+
+    def accept(text, kind):
+        if kind == 'span' and lead and smartcase(token, text):
+            text = text[len(lead):]
+        elif kind == 'path' or not typed or not smartcase(typed, text):
+            return None
+        return text if text.lower() != typed.lower() else None
     out, seen = [], set()
-    for row, m in ranked(screen, cy, start, accept, before):
-        if m.group() not in seen:
-            seen.add(m.group())
-            out.append((m.group(), after(screen, cy, row, m.end(), start)))
+    for text, row, end in ranked(pane, start, accept, before):
+        if text not in seen:
+            seen.add(text)
+            out.append((text, after(pane.screen, pane.cy, row, end, start)))
     return out
 
 
@@ -153,15 +281,17 @@ def next_chunk(following):
 def continuations(pane, following):
     """[(chunk, rest)] for what may come next after the text left of the
     cursor, each once: the next words in FOLLOWING (where the completion came
-    from) first, then those after each other place on screen where the last
-    word left of the cursor is, best first (ranked by the words before it)."""
+    from; None: none) first, then those after each other place on screen where
+    the last word left of the cursor is, best first (ranked by the words
+    before it)."""
     words = WORD.findall(pane.before)
-    found = [next_chunk(following)]
+    found = [next_chunk(following)] if following is not None else []
     if words:
         last = words[-1].lower()
-        for row, m in ranked(pane.screen, pane.cy, len(pane.before),
-                             lambda w: w.lower() == last, words[:-1][-CONTEXT:], cursor_row=False):
-            found.append(next_chunk(after(pane.screen, pane.cy, row, m.end(), 0)))
+        accept = lambda text, kind: kind == 'word' and text.lower() == last and text
+        for _, row, end in ranked(pane, len(pane.before), accept, words[:-1][-CONTEXT:],
+                                  cursor_row=False):
+            found.append(next_chunk(after(pane.screen, pane.cy, row, end, 0)))
     out, seen = [], set()
     for chunk in found:
         if chunk and chunk[0] not in seen:
@@ -182,26 +312,36 @@ def shown(state):
 
 # A backend: typed(pane, key) is (start, typed) for the word before the cursor
 # it takes, else None; complete(pane, start, typed) the alternatives for it,
-# best first, each {'text': what replaces typed, ...}; follow(pane, chosen)
-# those that go on from the chosen one, for Tab.
+# best first, each {'text': what replaces typed, ...}; follow(pane, start,
+# chosen) those that go on from the chosen one, for Tab; and if it has one,
+# go_on(pane, start, typed) those that go on from TYPED itself, for Tab when
+# complete has none.
 
 class Screen:
     """The words on the pane's screen."""
     name = 'screen'
 
     def typed(self, pane, key):
+        least = 2 if key == 'tab' else 1
         m = TYPED.search(pane.before)
-        if m and len(m.group()) >= (2 if key == 'tab' else 1):
-            return m.start(), m.group()
+        if m:
+            return (m.start(), m.group()) if len(m.group()) >= least else None
+        if len(re.search(r'\S*$', pane.before).group()) >= least:
+            return len(pane.before), ''         # punctuation only: for the spans that start with it
         return None
 
     def complete(self, pane, start, typed):
-        return [{'text': word + ' ', 'following': following}
-                for word, following in candidates(pane.screen, pane.cy, start, typed)]
+        return [{'text': text + ' ', 'following': following}
+                for text, following in candidates(pane, start, typed)]
 
-    def follow(self, pane, chosen):
+    def follow(self, pane, start, chosen):
         return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}
                 for chunk, rest in continuations(pane, chosen['following'])]
+
+    def go_on(self, pane, start, typed):
+        """A whole word: the words after it on screen."""
+        return [{'text': typed + chunk + ' ', 'following': rest}
+                for chunk, rest in continuations(pane, None)]
 
 
 class Program:
@@ -219,7 +359,8 @@ class Program:
 
 
 class Paths:
-    """The files in the folder of a path starting ~/, ./, ../, // or /folder/."""
+    """Paths starting ~/, ./, ../, // or /folder/: those on screen, then the
+    files in the folder."""
     name = 'paths'
 
     def typed(self, pane, key):
@@ -229,10 +370,33 @@ class Paths:
     def complete(self, pane, start, typed):
         path = typed[1:] if typed.startswith('//') else typed
         cut = path.rindex('/') + 1
-        return self.entries(pane, path[:cut], path[cut:])
+        out, seen = [], set()
+        for alt in self.on_screen(pane, start, path) + self.entries(pane, path[:cut], path[cut:]):
+            if alt['text'] not in seen:
+                seen.add(alt['text'])
+                out.append(alt)
+        return out
 
-    def follow(self, pane, chosen):
-        return self.entries(pane, chosen['text'], '') if chosen['text'].endswith('/') else []
+    def follow(self, pane, start, chosen):
+        return self.complete(pane, start, chosen['text']) if chosen['text'].endswith('/') else []
+
+    def on_screen(self, pane, start, path):
+        """The paths on screen (plain or coloured) that start with PATH, written
+        as it is (~/ or /), ranked; a folder ends in /, else a space."""
+        home = os.path.expanduser('~')
+
+        def accept(text, kind):
+            if kind == 'word' or not SCREEN_PATH.match(text):
+                return None
+            if path.startswith('~/') and text.startswith(home + '/'):
+                text = '~' + text[len(home):]
+            elif path.startswith('/') and text.startswith('~/'):
+                text = home + text[1:]
+            if text.rstrip('/') == path.rstrip('/') or not smartcase(path, text):
+                return None
+            return text if text.endswith('/') else text + self.end(pane, text)
+        before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
+        return [{'text': text} for text, _, _ in ranked(pane, start, accept, before)]
 
     def entries(self, pane, folder, part):
         """The files in FOLDER whose names start with PART (smart case), by
@@ -247,9 +411,12 @@ class Paths:
             shown_name = unicodedata.normalize('NFC', name)      # macOS keeps names decomposed
             if (name.startswith('.') and not part.startswith('.')) or not smartcase(part, shown_name):
                 continue
-            end = '/' if os.path.isdir(os.path.join(real, name)) else ' '
-            out.append({'text': folder + shown_name + end})
+            out.append({'text': folder + shown_name + self.end(pane, os.path.join(real, name))})
         return out
+
+    @staticmethod
+    def end(pane, path):
+        return '/' if os.path.isdir(os.path.join(pane.cwd(), os.path.expanduser(path))) else ' '
 
 
 BACKENDS = [Paths(), Program(), Screen()]
@@ -259,15 +426,43 @@ BY_NAME = {backend.name: backend for backend in BACKENDS}
 class Pane:
     def __init__(self, pane):
         self.pane = pane
-        cx, cy, self.pid = map(int, tmux('display-message', '-p', '-t', pane,
-                                         '#{cursor_x} #{cursor_y} #{pane_pid}').split())
+        cx, cy, self.pid, height = map(int, tmux('display-message', '-p', '-t', pane,
+                                                 '#{cursor_x} #{cursor_y} #{pane_pid} #{pane_height}').split())
+        self.middle = (height - 1) / 2
         # -N keeps trailing spaces, so a space left of the cursor is seen.
         self.screen = tmux('capture-pane', '-p', '-N', '-t', pane).split('\n')
         self.cy = cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
+        self._cwd = self._escaped = self._order = None
 
     def cwd(self):
-        return tmux('display-message', '-p', '-t', self.pane, '#{pane_current_path}').strip()
+        if self._cwd is None:
+            self._cwd = tmux('display-message', '-p', '-t', self.pane, '#{pane_current_path}').strip()
+        return self._cwd
+
+    def order(self, span):
+        """The name of the order for coloured spans (SPAN) or the rest, or the
+        default."""
+        if self._order is None:
+            self._order = {}
+        if span not in self._order:
+            name = tmux('show-options', '-gqv', ORDER_OPTIONS[span]).strip()
+            self._order[span] = name if name in ORDERS else ORDER_DEFAULT
+        return self._order[span]
+
+    def items(self, row):
+        """[(start, end, kind)] of ROW: its words, coloured spans and paths, by
+        start, the longest first."""
+        if self._escaped is None:
+            self._escaped = tmux('capture-pane', '-p', '-e', '-N', '-t', self.pane).split('\n')
+        line = self.screen[row]
+        found = {(m.start(), m.end()): 'word' for m in WORD.finditer(line)}
+        for a, b in paths(line):
+            found.setdefault((a, b), 'path')
+        if row < len(self._escaped):
+            for a, b in spans(line, self._escaped[row]):
+                found[(a, b)] = 'span'                  # a coloured word too
+        return sorted(((a, b, kind) for (a, b), kind in found.items()), key=lambda f: (f[0], -f[1]))
 
     def state_file(self):
         server = tmux('display-message', '-p', '#{socket_path}').strip().replace('/', '%')
@@ -281,7 +476,7 @@ class Pane:
                 state = json.load(f)
         except (OSError, ValueError):
             return None
-        if state and 'backend' in state and state.get('at') == [self.pid, self.cy, self.before]:
+        if state and 'start' in state and state.get('at') == [self.pid, self.cy, self.before]:
             return state
         return None
 
@@ -332,9 +527,11 @@ def start(pane, key):
     else:
         return False
     alts = backend.complete(pane, *found)
+    if not alts and key == 'tab' and hasattr(backend, 'go_on'):
+        alts = backend.go_on(pane, *found)
     if not alts:
         return False
-    state = {'backend': backend.name,
+    state = {'backend': backend.name, 'start': found[0],
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
     step(pane, state, lambda levels: levels[-1].update(index=0))
     return True
@@ -359,7 +556,7 @@ def tab(pane):
             step(pane, state, lambda levels: levels[-1].update(index=0))
             return
         chosen = level['alts'][level['index']]
-        alts = BY_NAME[state['backend']].follow(pane, chosen)
+        alts = BY_NAME[state['backend']].follow(pane, state['start'], chosen)
         if alts:
             step(pane, state, lambda levels: levels.append(
                 {'none': chosen['text'], 'alts': alts, 'index': 0}))

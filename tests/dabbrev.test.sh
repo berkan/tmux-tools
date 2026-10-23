@@ -55,6 +55,9 @@ EOF
 # Wide enough that an absolute path under the scratch dir is on one row.
 tmux -f /dev/null new-session -d -x 200 -y 12 'sleep 600'
 tmux set -s escape-time 0
+# Reading order, so that the tests of the rest do not hang on the order
+# being tried out (@dabbrev-order); "orders" tests each.
+tmux set -g @dabbrev-order top
 PANE=$(tmux display -p '#{pane_id}')
 
 # editor LINE... — restart the pane with the editor under LINEs, in $CWD.
@@ -76,9 +79,9 @@ editor 'alpha beta gamma'
 typed 'ga'; dab expand
 expect "completes the word before the cursor, and a space" "gamma " "$(line)"
 
-editor 'gamma one' 'garden two'
+editor 'garden two' 'gamma one'
 typed 'ga'; dab expand
-expect "the nearest match comes first" "garden " "$(line)"
+expect "the match highest on screen comes first" "garden " "$(line)"
 dab expand
 expect "again: the next match replaces it" "gamma " "$(line)"
 dab expand
@@ -110,12 +113,12 @@ typed '日本 ga'; dab expand
 expect "wide characters before the word" '日本 gamma ' "$(line)"
 
 echo "context"
-editor 'a long recording here' 'Recorder/2026 more'
+editor 'Recorder/2026 more' 'a long recording here'
 typed 'long re'; dab expand
-expect "a match after the words typed before it beats a nearer one" 'long recording ' "$(line)"
-editor 'a long recording here' 'Recorder/2026 more'
+expect "a match after the words typed before it beats one higher up" 'long recording ' "$(line)"
+editor 'Recorder/2026 more' 'a long recording here'
 typed 're'; dab expand
-expect "  ... without them, the nearer one" 'Recorder/2026 ' "$(line)"
+expect "  ... without them, the higher one" 'Recorder/2026 ' "$(line)"
 editor 'the long red' 'a long recording' 'red'
 typed 'a long re'; dab tab
 expect "more words before it matching beats fewer" 'a long recording ' "$(line)"
@@ -132,9 +135,9 @@ for r in $(seq 10); do
 done
 editor "${words[@]}"
 typed 'wo'; dab tab
-expect "completes" 'word101 ' "$(line)"
+expect "completes" 'word11 ' "$(line)"
 dab tab
-expect "  ... and goes on from the state kept" 'word101 word102 ' "$(line)"
+expect "  ... and goes on from the state kept" 'word11 word12 ' "$(line)"
 
 editor 'alpha beta'
 typed 'zz'; dab expand
@@ -155,9 +158,28 @@ dab tab
 expect "at the end of the screen: nothing more" 'garden two, three four ' "$(line)"
 expect "  ... and no Tab is sent" 0 "$(tabs)"
 
-editor 'gamma one' 'garden two'
+editor 'garden two' 'gamma one'
 typed 'ga'; dab expand expand tab
 expect "Tab after M-/ goes on from the match M-/ chose" 'gamma one ' "$(line)"
+
+editor 'Your transcription code' 'and Now it' 'Now we'
+typed 'Your'; dab tab
+expect "Tab on a whole word: the word after it" 'Your transcription ' "$(line)"
+dab tab
+expect "  ... and on" 'Your transcription code ' "$(line)"
+editor 'Your transcription code'
+typed 'your'; dab tab
+expect "  ... in any case" 'your transcription ' "$(line)"
+editor 'and Now it' 'Now we'
+typed 'Now'; dab tab
+expect "  ... the first of those after it, by the words before" 'Now it ' "$(line)"
+dab expand
+expect "  ... M-/: the next" 'Now we ' "$(line)"
+dab undo undo
+expect "  ... undo: back to the word" 'Now' "$(line)"
+editor 'Your'
+typed 'Your'; dab tab
+expect "  ... nothing after it: Tab goes through" '1 Your' "$(tabs) $(line)"
 
 editor 'garden two'
 typed 'ga'; dab tab
@@ -188,9 +210,9 @@ typed '/co'; dab tab
 expect "a /command: Tab goes through" "1 /co" "$(tabs) $(line)"
 
 echo "M-/ after Tab: the other words that follow"
-editor 'alpha beta one' 'alpha gamma two'
+editor 'alpha gamma two' 'alpha beta one'
 typed 'al'; dab tab tab
-expect "Tab: the word after the nearest alpha" 'alpha gamma ' "$(line)"
+expect "Tab: the word after the highest alpha" 'alpha gamma ' "$(line)"
 dab expand
 expect "M-/: the word after another alpha" 'alpha beta ' "$(line)"
 dab expand
@@ -271,7 +293,104 @@ expect "no such file: Tab goes through" '1 ./zz' "$(tabs) $(line)"
 editor 'https://alpha.example'
 typed 'https://al'; dab tab
 expect "a URL is no path: completes from the screen" 'https://alpha.example ' "$(line)"
+CWD="$F"
+editor "see ~/alps/inner.txt and $F/ghost/file.txt"
+typed '~/al'; dab expand
+expect "paths on screen come before the files" '~/alps/inner.txt ' "$(line)"
+dab expand
+expect "  ... then the files" '~/alpha.txt ' "$(line)"
+editor "see $F/ghost/file.txt"
+typed '~/gh'; dab expand
+expect "  ... a path on screen under the home folder, as ~/" '~/ghost/file.txt ' "$(line)"
+editor 'see ./alps, ./ghost.txt.'
+typed './a'; dab expand
+expect "  ... a folder on screen ends in /" './alps/' "$(line)"
+editor 'see ./alps, ./ghost.txt.'
+typed './g'; dab expand
+expect "  ... punctuation after it is not part of it" './ghost.txt ' "$(line)"
+editor $'see \e[36m./with space.txt\e[0m here'
+typed './w'; dab expand
+expect "  ... a coloured path takes its spaces" './with space.txt ' "$(line)"
 CWD="$SCRATCH"
+
+echo "coloured spans"
+editor $'see \e[33mabc-123:45\e[0m now'
+typed 'ab'; dab expand
+expect "a coloured span is a completion, before the word in it" 'abc-123:45 ' "$(line)"
+dab expand
+expect "  ... then the word" 'abc-123 ' "$(line)"
+editor $'\e[38;5;105mTranscribe/_jobs/<batch>.cell.py\e[39m is far' 'Transcribe/notes nearer' 'Transcribed here'
+typed 'Tr'; dab tab
+expect "  ... even a far one comes before the nearer words" 'Transcribe/_jobs/<batch>.cell.py ' "$(line)"
+dab expand
+expect "  ... then the words, from the top" 'Transcribe/_jobs ' "$(line)"
+editor $'fixed in \e[1m<v4521>\e[0m today'
+typed '<v'; dab expand
+expect "  ... it may start with what is not a letter" '<v4521> ' "$(line)"
+editor $'x \e[36mfoo bar\e[0m y'
+typed 'fo'; dab expand
+expect "  ... with spaces too" 'foo bar ' "$(line)"
+editor 'trans1 trans1 trans1' $'see \e[36mtrans2\e[0m'
+typed 'tr'; dab expand
+expect "  ... a coloured word is a span, before the more frequent plain one" 'trans2 ' "$(line)"
+editor $'see \e[36m["a1f3", "b72c"]\e[0m: the ids'
+typed '['; dab expand
+expect "  ... what was typed may be punctuation only" '["a1f3", "b72c"] ' "$(line)"
+editor $'see \e[36m["a1f3", "b72c"]\e[0m: the ids'
+typed '["'; dab tab
+expect "  ... with Tab, two of it" '0 ["a1f3", "b72c"] ' "$(tabs) $(line)"
+editor $'see \e[36m["a1f3", "b72c"]\e[0m: the ids'
+typed 'x ['; dab tab
+expect "  ... one is not enough for Tab" '1 x [' "$(tabs) $(line)"
+editor 'see (alpha)'
+typed '('; dab expand
+expect "  ... and completes no plain word" '(' "$(line)"
+editor $'see \e[1mswiz:\e[0m and swizzle'
+typed 'sw'; dab expand
+expect "  ... punctuation at its end is not part of it" 'swiz ' "$(line)"
+editor $'\e[2mgrey all over\e[0m'
+typed 'gr'; dab expand expand
+expect "a whole coloured line is no span" 'gr' "$(line)"
+editor $'\e[31mred\e[0m'
+typed 'r'; dab expand
+expect "  ... nor is the word it is" 'red ' "$(line)"
+
+echo "orders (@dabbrev-order)"
+ORDERED=(gamma x x x garden x gallop x gazebo x)     # rows 0-9; the cursor's is 10 of 12
+order() {
+    if [ "$1" = default ]; then tmux set -gu @dabbrev-order; else tmux set -g @dabbrev-order "$1"; fi
+    editor "${ORDERED[@]}"
+    typed 'ga'; local got=''
+    for _ in 1 2 3 4; do dab expand; got+="$(line | tr -d ' ') "; done
+    echo "$got"
+}
+expect "middle (the default): nearest the middle of the screen" 'gallop garden gazebo gamma ' "$(order default)"
+expect "cursor: nearest the cursor" 'gazebo gallop garden gamma ' "$(order cursor)"
+expect "top: from the top" 'gamma garden gallop gazebo ' "$(order top)"
+expect "an unknown order is the default" 'gallop garden gazebo gamma ' "$(order nonesuch)"
+ORDERED=(gamma x x 'gazebo gazebo' garden x gallop x)
+expect "frequent: the most often on screen first" 'gazebo gallop garden gamma ' "$(order frequent)"
+expect "  ... which the default is not" 'gallop garden gazebo gamma ' "$(order default)"
+tmux set -gu @dabbrev-order
+editor $'before, \e[36mtranscribe\e[39m and a transcript' $'\e[38;5;105mTranscribe/_jobs/<b>.cell.py\e[39m here' \
+    $'few lines \e[36mtranscribe\e[39m fills' $'so any transcript, and \e[1mtranscribe status <b>\e[0m tells'
+typed 'trans'; got=''
+for _ in 1 2 3 4; do dab expand; got+="$(line)|"; done
+expect "  ... the coloured ones first, by @dabbrev-span-order (default middle)" \
+    'transcribe status <b> |transcribe |Transcribe/_jobs/<b>.cell.py |transcript |' "$got"
+tmux set -g @dabbrev-span-order frequent
+editor $'before, \e[36mtranscribe\e[39m and a transcript' $'\e[38;5;105mTranscribe/_jobs/<b>.cell.py\e[39m here' \
+    $'few lines \e[36mtranscribe\e[39m fills' $'so any transcript, and \e[1mtranscribe status <b>\e[0m tells'
+typed 'trans'; got=''
+for _ in 1 2 3 4; do dab expand; got+="$(line)|"; done
+expect "  ... which may be another" \
+    'transcribe |transcribe status <b> |Transcribe/_jobs/<b>.cell.py |transcript |' "$got"
+tmux set -gu @dabbrev-span-order
+tmux set -g @dabbrev-order middle
+editor x x x x x gamma garden                         # rows 5 and 6: as far from the middle, 5.5
+typed 'ga'; dab expand
+expect "middle: of two as far from it, the lower" 'garden ' "$(line)"
+tmux set -g @dabbrev-order top
 
 echo "M-? (undo)"
 editor 'garden two three'
@@ -285,7 +404,7 @@ expect "  ... and no further" ga "$(line)"
 dab tab
 expect "  ... where Tab completes again" 'garden ' "$(line)"
 
-editor 'gamma one' 'garden two'
+editor 'garden two' 'gamma one'
 typed 'ga'; dab expand expand undo
 expect "takes back an M-/: the match before" 'garden ' "$(line)"
 dab expand
@@ -315,7 +434,7 @@ tmux set -gu @dabbrev-undo-key
 echo "keys pressed in a client"
 # The bindings as a terminal reaches them: a client of the server, run in a
 # pane of another, gets M-/ and Tab.
-editor 'gamma one' 'garden two'
+editor 'garden two' 'gamma one'
 tmux set -gu @dabbrev-key
 tmux set -g @dabbrev-tab-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"  # the editor
 python3 "$DAB" bind
@@ -324,7 +443,7 @@ TMUX_TMPDIR="$SCRATCH/o" tmux -f /dev/null new-session -d -x 80 -y 13 \
     "env -u TMUX TMUX_TMPDIR=$SCRATCH tmux attach"
 sleep 0.8
 outer() { TMUX_TMPDIR="$SCRATCH/o" tmux send-keys "$@"; sleep 0.4; }
-editor 'gamma one' 'garden two'
+editor 'garden two' 'gamma one'
 outer -l ga; outer M-/; outer M-/
 expect "M-/ twice" "gamma " "$(line)"
 outer Tab
