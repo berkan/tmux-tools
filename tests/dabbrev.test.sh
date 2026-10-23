@@ -223,6 +223,39 @@ editor '/compact /config'
 typed '/co'; dab tab
 expect "a /command: Tab goes through" "1 /co" "$(tabs) $(line)"
 
+echo "...word: up to the word"
+PARA=('we keep them in ppi for now, while' '  you are changing them. Move them out once' '  they settle, so ppi consumes. Then more')
+editor "${PARA[@]}"
+typed 'keep'; dab tab tab
+typed '...consumes'; dab tab
+expect "after Tabs: from there to the word, with what is on it" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. ' "$(line)"
+dab tab
+expect "  ... then Tab goes on word by word" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. Then ' "$(line)"
+dab undo undo
+expect "  ... undo: back to what was typed" 'keep them in ...consumes' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them in ...cons'; dab tab
+expect "without Tabs before: from where the words before it are" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them in ...Move'; dab tab
+expect "  ... to the first such word" 'keep them in ppi for now, while you are changing them. Move ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them in ...th'; dab tab
+expect "  ... by prefix, smart case" 'keep them in ppi for now, while you are changing them. ' "$(line)"
+dab expand
+expect "  ... M-/: on to the next such word" 'keep them in ppi for now, while you are changing them. Move them ' "$(line)"
+dab expand
+expect "  ... and the next" 'keep them in ppi for now, while you are changing them. Move them out once they ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them in ...zzz'; dab tab
+expect "no such word after: Tab goes through" '1 keep them in ...zzz' "$(tabs) $(line)"
+editor "${PARA[@]}"
+typed '...cons'; dab tab
+expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
+
 echo "M-/ after Tab: the other words that follow"
 editor 'alpha gamma two' 'alpha beta one'
 typed 'al'; dab tab tab

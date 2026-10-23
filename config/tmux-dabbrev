@@ -34,6 +34,13 @@
 # A completion from the screen ends in a space, so the next press can follow
 # at once.
 #
+#   ...WORD       (on the screen's words) everything from where the text
+#                 before ... leaves off on screen up to a word starting with
+#                 WORD, with what is on it (consumes.), line breaks as
+#                 spaces: from where the last Tab took its words, else from
+#                 where the words before ... are. M-/ goes on to the next
+#                 such word; Tab after it, word by word.
+#
 #   expand (M-/)  the best word on screen that starts with what was typed:
 #                 the entities before any word (and only they for
 #                 punctuation alone, such as ["); within each, one after the
@@ -79,6 +86,7 @@ import unicodedata
 
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
+UPTO_TYPED = re.compile(r"(?:^|(?<=\s))\.\.\.\w[\w'./-]*$")      # ...word
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
@@ -342,6 +350,42 @@ def continuations(pane, following):
     return out
 
 
+def up_to(pane, start, word):
+    """...WORD: the text on screen from where the text left of START leaves
+    off up to a word that starts with WORD (smart case) and what is on it
+    (consumes.), its line breaks one space; one alternative for each such
+    word, in order, so M-/ goes on to the next. From the text the last Tab
+    took its words from, when the state it left is for the text left of
+    START; then from after each other place on screen where that text's last
+    word is (ranked as Tab's continuations)."""
+    anchor = pane.before[:start]
+    words = WORD.findall(anchor)
+    if not words:
+        return []
+    sources = []
+    state = pane.state(before=anchor)
+    if state and state.get('backend') == 'screen':
+        level = state['levels'][-1]
+        if level['index'] < len(level['alts']) and 'following' in level['alts'][level['index']]:
+            sources.append(level['alts'][level['index']]['following'])
+    last = words[-1].lower()
+    accept = lambda text, kind: kind == 'word' and text.lower() == last and text
+    for _, row, end in ranked(pane, start, accept, words[:-1][-CONTEXT:], cursor_row=False):
+        sources.append(after(pane.screen, pane.cy, row, end, 0))
+    out, seen = [], set()
+    for following in sources:
+        for m in WORD.finditer(following):
+            if not smartcase(word, m.group()):
+                continue
+            end = m.start() + len(re.match(r'\S*', following[m.start():]).group())
+            text = re.sub(r'\s*\n\s*', ' ', following[:end])
+            text = (text.lstrip() if anchor[-1:].isspace() else text) + ' '
+            if text not in seen:
+                seen.add(text)
+                out.append({'text': text, 'following': following[end:]})
+    return out
+
+
 def shown(state):
     """(text, back): the text the completion puts in place of what was typed,
     the cursor BACK characters before its end: the chosen alternative of the
@@ -422,6 +466,9 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
+        m = UPTO_TYPED.search(pane.before)
+        if m:
+            return m.start(), m.group()
         least = 2 if key == 'tab' else 1
         m = TYPED.search(pane.before)
         if m:
@@ -431,6 +478,8 @@ class Screen:
         return None
 
     def complete(self, pane, start, typed):
+        if typed.startswith('...'):
+            return up_to(pane, start, typed[3:])
         return [{'text': text + ' ', 'following': following}
                 for text, following in candidates(pane, start, typed)]
 
@@ -571,13 +620,16 @@ class Pane:
         os.makedirs(folder, mode=0o700, exist_ok=True)
         return os.path.join(folder, f'{server}{self.pane}.json')
 
-    def state(self):
+    def state(self, before=None):
+        """The state the last press left, if it left the cursor's row and the
+        text left of the cursor as they are (or that text as BEFORE)."""
         try:
             with open(self.state_file()) as f:
                 state = json.load(f)
         except (OSError, ValueError):
             return None
-        if state and 'start' in state and state.get('at') == [self.pid, self.cy, self.before]:
+        at = [self.pid, self.cy, self.before if before is None else before]
+        if state and 'start' in state and state.get('at') == at:
             return state
         return None
 
