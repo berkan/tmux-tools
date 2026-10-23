@@ -12,8 +12,9 @@
 #                 letter of it, M-/ takes , alone (all of them). One a line:
 #                 NAME TEXT, # for a comment; in TEXT | is where the cursor
 #                 goes, \n a line break (pasted, so not Enter), \s a space
-#                 (at the end), \| and \\ a bar and a backslash. Read at
-#                 every press.
+#                 (at the end), \| and \\ a bar and a backslash. Read each
+#                 time a ,NAME completion starts (not cached: edits apply at
+#                 once).
 #   paths         a word starting ~/, ./, ../, // (for /: alone, / is the
 #                 program's commands) or /folder/: first the paths on screen
 #                 that start with it (ranked as words are; ~/ and /Users/me/
