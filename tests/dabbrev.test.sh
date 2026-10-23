@@ -32,24 +32,37 @@ expect() {
 }
 
 # A one-line editor: the lines given, then "> " and what is typed, which it
-# also writes to a file (the screen cannot show a trailing space). Backspace
-# deletes; a Tab is logged, not inserted.
+# also writes to a file (the screen cannot show a trailing space), and the
+# cursor's place in it to another. Typing goes in at the cursor; Backspace
+# deletes before it; Left and Right move it; a bracketed paste goes in whole,
+# its line breaks shown as ⏎; a Tab is logged, not inserted.
 cat > "$SCRATCH/editor.py" <<'EOF'
-import os, sys, tty
+import os, re, sys, tty, unicodedata
 log = open(sys.argv[1], 'a')
 tty.setraw(0)
-os.write(1, ('\x1b[2J\x1b[H' + ''.join(l + '\r\n' for l in sys.argv[2:]) + '> ').encode())
-text = ''
+os.write(1, ('\x1b[?2004h\x1b[2J\x1b[H' + ''.join(l + '\r\n' for l in sys.argv[2:]) + '> ').encode())
+text, pos, pasting = '', 0, False
 while True:
-    for ch in os.read(0, 64).decode('utf-8', 'replace'):
-        if ch == '\t':
+    data = os.read(0, 256).decode('utf-8', 'replace')
+    for m in re.finditer(r'\x1b\[(200~|201~|C|D)|.', data, re.S):
+        key, ch = m.group(1), m.group()
+        if key in ('200~', '201~'):
+            pasting = key == '200~'
+        elif key in ('C', 'D'):
+            pos = max(0, min(len(text), pos + (1 if key == 'C' else -1)))
+        elif ch == '\t':
             log.write('TAB\n'); log.flush()
         elif ch == '\x7f':
-            text = text[:-1]
-        elif ch.isprintable():
-            text += ch
-    os.write(1, ('\r\x1b[K> ' + text).encode())
+            if pos:
+                text, pos = text[:pos - 1] + text[pos:], pos - 1
+        elif ch.isprintable() or (pasting and ch == '\r'):
+            ch = '\n' if ch == '\r' else ch
+            text, pos = text[:pos] + ch + text[pos:], pos + 1
+    shown = text.replace('\n', '⏎')
+    cells = sum(2 if unicodedata.east_asian_width(c) in 'WF' else 1 for c in shown[:pos])
+    os.write(1, ('\r\x1b[K> ' + shown + '\r\x1b[' + str(2 + cells) + 'C').encode())
     open(sys.argv[1] + '.text', 'w').write(text)
+    open(sys.argv[1] + '.pos', 'w').write(str(pos))
 EOF
 
 # Wide enough that an absolute path under the scratch dir is on one row.
@@ -72,6 +85,7 @@ editor() {
 typed() { tmux send-keys -t "$PANE" -l "$1"; sleep 0.2; }
 dab() { for a in "$@"; do HOME="$SCRATCH/files" python3 "$DAB" "$a" "$PANE"; done; sleep 0.1; }
 line() { cat "$SCRATCH/tabs.log.text"; }
+cursor() { cat "$SCRATCH/tabs.log.pos"; }
 tabs() { grep -c TAB "$SCRATCH/tabs.log" || true; }
 
 echo "M-/ (expand)"
@@ -391,6 +405,51 @@ editor x x x x x gamma garden                         # rows 5 and 6: as far fro
 typed 'ga'; dab expand
 expect "middle: of two as far from it, the lower" 'garden ' "$(line)"
 tmux set -g @dabbrev-order top
+
+echo "snippets (,name)"
+SNIP="$SCRATCH/snippets"
+cat > "$SNIP" <<'EOF'
+# NAME  TEXT
+rr      re: "|" --\s
+rs      rest
+sig     Best,\nB
+bar     a \| b
+EOF
+tmux set -g @dabbrev-snippets "$SNIP"
+editor 'nothing'
+typed ',rr'; dab tab
+expect "Tab expands, the cursor where | was" 're: "" -- |5' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo takes it back" ',rr|3' "$(line)|$(cursor)"
+editor 'nothing'
+typed 'see ,r'; dab expand
+expect "M-/: the first whose name starts so" 'see re: "" -- ' "$(line)"
+dab expand
+expect "  ... again: the next, from where the cursor was" 'see rest|8' "$(line)|$(cursor)"
+dab expand
+expect "  ... past the last: what was typed" 'see ,r|6' "$(line)|$(cursor)"
+editor 'nothing'
+typed ','; dab expand
+expect "a comma alone: all of them, by name" 'a | b' "$(line)"
+editor 'nothing'
+typed ',sig'; dab tab
+expect "a line break is pasted, not typed" "$(printf 'Best,\nB')" "$(line)"
+dab undo
+expect "  ... and taken back" ',sig' "$(line)"
+editor 'nothing'
+typed ',bar'; dab tab
+expect "a backslash and a bar: a bar" 'a | b' "$(line)"
+editor 'rrr'
+typed ',zz'; dab tab
+expect "no such snippet: Tab goes through" '1 ,zz' "$(tabs) $(line)"
+editor 'nothing'
+typed 'a,rr'; dab tab
+expect "a comma inside a word is no snippet" '1 a,rr' "$(tabs) $(line)"
+tmux set -g @dabbrev-snippets "$SCRATCH/none"
+editor 'nothing'
+typed ',rr'; dab tab
+expect "no snippets file: Tab goes through" '1 ,rr' "$(tabs) $(line)"
+tmux set -g @dabbrev-snippets "$SNIP"
 
 echo "M-? (undo)"
 editor 'garden two three'

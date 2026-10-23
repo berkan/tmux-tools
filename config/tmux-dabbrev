@@ -6,6 +6,14 @@
 # keys: Claude Code, pi, a shell. Completions come from a backend, the first
 # in BACKENDS whose trigger matches the text before the cursor:
 #
+#   snippets      a word starting , (,rr): the snippets in the file named by
+#                 @dabbrev-snippets (default ~/.pi/agent/tmux-dabbrev.snippets)
+#                 whose names start with the rest, by name; Tab needs a
+#                 letter of it, M-/ takes , alone (all of them). One a line:
+#                 NAME TEXT, # for a comment; in TEXT | is where the cursor
+#                 goes, \n a line break (pasted, so not Enter), \s a space
+#                 (at the end), \| and \\ a bar and a backslash. Read at
+#                 every press.
 #   paths         a word starting ~/, ./, ../, // (for /: alone, / is the
 #                 program's commands) or /folder/: first the paths on screen
 #                 that start with it (ranked as words are; ~/ and /Users/me/
@@ -67,6 +75,8 @@ import unicodedata
 
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
+SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
+SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
 ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
@@ -301,21 +311,79 @@ def continuations(pane, following):
 
 
 def shown(state):
-    """The text the completion puts left of the cursor in place of what was
-    typed: the chosen alternative of the last level, or with none chosen, the
-    level's own (what was typed, or what the level goes on from)."""
+    """(text, back): the text the completion puts in place of what was typed,
+    the cursor BACK characters before its end: the chosen alternative of the
+    last level, or with none chosen, the level's own (what was typed, or what
+    the level goes on from)."""
     level = state['levels'][-1]
     if level['index'] < len(level['alts']):
-        return level['alts'][level['index']]['text']
-    return level['none']
+        alt = level['alts'][level['index']]
+        return alt['text'], alt.get('back', 0)
+    return level['none'], 0
 
 
 # A backend: typed(pane, key) is (start, typed) for the word before the cursor
 # it takes, else None; complete(pane, start, typed) the alternatives for it,
-# best first, each {'text': what replaces typed, ...}; follow(pane, start,
+# best first, each {'text': what replaces typed, 'back': where the cursor is
+# left, as characters before the end (none: at the end), ...}; follow(pane, start,
 # chosen) those that go on from the chosen one, for Tab; and if it has one,
 # go_on(pane, start, typed) those that go on from TYPED itself, for Tab when
 # complete has none.
+
+def snippet(raw):
+    """(text, back) of a snippet's TEXT as written in the file: the escapes
+    read, and the cursor BACK characters before the end, where | was."""
+    out, cursor, i = [], None, 0
+    while i < len(raw):
+        if raw[i] == '\\' and i + 1 < len(raw):
+            out.append({'n': '\n', 's': ' ', 't': '\t'}.get(raw[i + 1], raw[i + 1]))
+            i += 2
+            continue
+        if raw[i] == '|' and cursor is None:
+            cursor = len(out)
+        else:
+            out.append(raw[i])
+        i += 1
+    return ''.join(out), len(out) - cursor if cursor is not None else 0
+
+
+def snippets():
+    """{name: TEXT as written} from the file named by @dabbrev-snippets."""
+    path = tmux('show-options', '-gqv', SNIPPETS_OPTION).strip() or SNIPPETS_DEFAULT
+    try:
+        with open(os.path.expanduser(path), encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return {}
+    out = {}
+    for line in lines:
+        parts = line.strip().split(None, 1)
+        if parts and not parts[0].startswith('#'):
+            out[parts[0]] = parts[1].strip() if len(parts) > 1 else ''
+    return out
+
+
+class Snippets:
+    """,NAME: the snippets whose names start with NAME."""
+    name = 'snippets'
+
+    def typed(self, pane, key):
+        m = SNIPPET_TYPED.search(pane.before)
+        if m and (m.group(1) or key == 'expand'):
+            return m.start(), m.group()
+        return None
+
+    def complete(self, pane, start, typed):
+        out = []
+        for name, raw in sorted(snippets().items()):
+            if smartcase(typed[1:], name):
+                text, back = snippet(raw)
+                out.append({'text': text, 'back': back})
+        return out
+
+    def follow(self, pane, start, chosen):
+        return []
+
 
 class Screen:
     """The words on the pane's screen."""
@@ -419,7 +487,7 @@ class Paths:
         return '/' if os.path.isdir(os.path.join(pane.cwd(), os.path.expanduser(path))) else ' '
 
 
-BACKENDS = [Paths(), Program(), Screen()]
+BACKENDS = [Snippets(), Paths(), Program(), Screen()]
 BY_NAME = {backend.name: backend for backend in BACKENDS}
 
 
@@ -487,16 +555,27 @@ class Pane:
             json.dump(state, f)
 
     def replace(self, old, new):
-        """Turn the text OLD left of the cursor into NEW, and wait (briefly)
-        until the screen shows it."""
+        """Turn the text OLD into NEW, each (text, back) as shown gives it: the
+        cursor first put at OLD's end, then left BACK characters before NEW's;
+        and wait (briefly) until the screen shows it. Text with a line break
+        goes in as a bracketed paste, so the program does not take it as
+        Enter."""
+        (old, old_back), (new, new_back) = old, new
+        if old_back:
+            tmux('send-keys', '-t', self.pane, '-N', str(old_back), 'Right')
         keep = 0
         while keep < min(len(old), len(new)) and old[keep] == new[keep]:
             keep += 1
         if len(old) > keep:
             tmux('send-keys', '-t', self.pane, '-N', str(len(old) - keep), 'BSpace')
-        if new[keep:]:
+        if '\n' in new[keep:]:
+            tmux('set-buffer', '-b', 'tmux-dabbrev', '--', new[keep:])
+            tmux('paste-buffer', '-p', '-d', '-b', 'tmux-dabbrev', '-t', self.pane)
+        elif new[keep:]:
             tmux('send-keys', '-t', self.pane, '-l', '--', new[keep:])
-        want = new[-12:]
+        if new_back:
+            tmux('send-keys', '-t', self.pane, '-N', str(new_back), 'Left')
+        want = new[:len(new) - new_back].split('\n')[-1][-12:]
         end = time.monotonic() + 0.5
         while time.monotonic() < end:
             if Pane(self.pane).before.endswith(want):
