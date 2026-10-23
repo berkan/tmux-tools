@@ -34,6 +34,10 @@
 # A completion from the screen ends in a space, so the next press can follow
 # at once.
 #
+#   ^WORD, ^ WORD (on the screen's words) only words that begin a line; the
+#                 ^ goes. After "- " (or * • + 1. 1)), only the first words
+#                 of list items; after ". " (! ?), only words that begin a
+#                 sentence; those stay, and with no such match, all words.
 #   ...WORD       (on the screen's words) everything from where the text
 #                 before ... leaves off on screen up to a word starting with
 #                 WORD, with what is on it (consumes.), line breaks as
@@ -86,6 +90,9 @@ import unicodedata
 
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
+LINE_TYPED = re.compile(r"(?:^|(?<=\s))\^ ?\w[\w'./-]*$")      # ^word, ^ word
+LIST_LEAD = re.compile(r'(?:^|\s)(?:[-*•+]|\d+[.)])\s$')         # - word
+SENTENCE_LEAD = re.compile(r'[.!?]["\'’”)\]]*\s$')               # . word
 UPTO_TYPED = re.compile(r"(?:^|(?<=\s))\.\.\.\w[\w'./-]*$")      # ...word
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
@@ -260,14 +267,39 @@ def paths(line):
     return out
 
 
-def ranked(pane, start, accept, before, cursor_row=True):
+def line_start(pane, row, a):
+    """Whether character A of ROW begins its line: nothing but spaces and
+    marks (⏺, │) before it."""
+    return not re.search(r'\w', pane.screen[row][:a])
+
+
+def list_item(pane, row, a):
+    """Whether character A of ROW is the first of a list item: after a
+    marker (- * • + 1. 1)) that begins the line."""
+    return bool(re.fullmatch(r'\W*?(?:[-*•+]|\d+[.)])\s+', pane.screen[row][:a]))
+
+
+def sentence_start(pane, row, a):
+    """Whether character A of ROW begins a sentence: after . ! or ?, or
+    beginning a line after one that ends a sentence or is blank."""
+    head = pane.screen[row][:a]
+    if re.search(r'[.!?]["\'’”)\]]*\s+$', head):
+        return True
+    if re.search(r'\w', head):
+        return False
+    above = pane.screen[row - 1].strip() if row else ''
+    return not above or bool(re.search(r'[.!?:]["\'’”)\]]*$', above))
+
+
+def ranked(pane, start, accept, before, cursor_row=True, where=None):
     """[(text, row, end)] for the things on the pane's screen (words, coloured
     spans, paths) that ACCEPT(text, kind) turns into a TEXT: the coloured
     spans before the rest, and in each, first those whose words before them
     on screen (across rows) match the most of the words BEFORE, then in the
     pane's order for them (ORDERS; START: where what was typed starts on the
     cursor's row; a text counts as often as it is taken here). Not what is at
-    START, nor anything on the cursor's row unless CURSOR_ROW."""
+    START, nor anything on the cursor's row unless CURSOR_ROW, nor with WHERE
+    anything at a place (pane, row, character) it does not take."""
     found, seen = [], []
     for row, line in enumerate(pane.screen):
         words = list(WORD.finditer(line))
@@ -277,6 +309,8 @@ def ranked(pane, start, accept, before, cursor_row=True):
                 seen.append(words[k].group())
                 k += 1
             if row == pane.cy and (not cursor_row or a <= start < b or a == start):
+                continue
+            if where and not where(pane, row, a):
                 continue
             text = accept(line[a:b], kind)
             if text:
@@ -292,7 +326,7 @@ def ranked(pane, start, accept, before, cursor_row=True):
     return [(text, row, b) for *_, row, _, text, b in sorted(found, key=key)]
 
 
-def candidates(pane, start, typed):
+def candidates(pane, start, typed, where=None):
     """[(text, following)] for each word or coloured span on the pane's screen
     that completes TYPED (from character START of the cursor's row), each
     once, best first (ranked); FOLLOWING is the text after it (after). A span
@@ -309,7 +343,7 @@ def candidates(pane, start, typed):
             return None
         return text if text.lower() != typed.lower() else None
     out, seen = [], set()
-    for text, row, end in ranked(pane, start, accept, before):
+    for text, row, end in ranked(pane, start, accept, before, where=where):
         if text not in seen:
             seen.add(text)
             out.append((text, after(pane.screen, pane.cy, row, end, start)))
@@ -466,7 +500,7 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
-        m = UPTO_TYPED.search(pane.before)
+        m = UPTO_TYPED.search(pane.before) or LINE_TYPED.search(pane.before)
         if m:
             return m.start(), m.group()
         least = 2 if key == 'tab' else 1
@@ -480,8 +514,17 @@ class Screen:
     def complete(self, pane, start, typed):
         if typed.startswith('...'):
             return up_to(pane, start, typed[3:])
+        if typed.startswith('^'):                   # line starts only; the ^ goes
+            word = typed.lstrip('^ ')
+            return self.words(pane, start + len(typed) - len(word), word, line_start)
+        lead = pane.before[:start]                  # - and . stay: they are text too
+        where = list_item if LIST_LEAD.search(lead) else sentence_start if SENTENCE_LEAD.search(lead) else None
+        return self.words(pane, start, typed, where) or (self.words(pane, start, typed) if where else [])
+
+    @staticmethod
+    def words(pane, start, typed, where=None):
         return [{'text': text + ' ', 'following': following}
-                for text, following in candidates(pane, start, typed)]
+                for text, following in candidates(pane, start, typed, where)]
 
     def follow(self, pane, start, chosen):
         return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}

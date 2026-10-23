@@ -82,7 +82,7 @@ editor() {
     tmux respawn-pane -k -t "$PANE" -c "$CWD" "python3 $SCRATCH/editor.py $SCRATCH/tabs.log $(printf '%q ' "$@")"
     sleep 0.4
 }
-typed() { tmux send-keys -t "$PANE" -l "$1"; sleep 0.2; }
+typed() { tmux send-keys -t "$PANE" -l -- "$1"; sleep 0.2; }
 dab() { for a in "$@"; do HOME="$SCRATCH/files" python3 "$DAB" "$a" "$PANE"; done; sleep 0.1; }
 line() { cat "$SCRATCH/tabs.log.text"; }
 cursor() { cat "$SCRATCH/tabs.log.pos"; }
@@ -222,6 +222,40 @@ expect "after @ (the program's own file completion): Tab goes through" "1 @src/a
 editor '/compact /config'
 typed '/co'; dab tab
 expect "a /command: Tab goes through" "1 /co" "$(tabs) $(line)"
+
+echo "anchors: ^ line starts, . sentence starts, - list items"
+# cycle WHAT... — the line after M-/ presses, one per press, joined by |.
+cycle() { local got=''; for _ in "$@"; do dab expand; got+="$(line)|"; done; echo "$got"; }
+editor 'Howdy partner' 'see Howitzer here' '  Howling at the start'
+typed '^How'
+expect "^: only words that begin a line, the ^ gone" 'Howdy |Howling |^How|' "$(cycle 1 2 3)"
+editor 'Howdy partner' 'see Howitzer here' '  Howling at the start'
+typed '^ How'
+expect "  ... ^ and a space the same" 'Howdy |Howling |^ How|' "$(cycle 1 2 3)"
+editor 'see Howitzer here'
+typed '^How'; dab tab
+expect "  ... none such: nothing, Tab goes through" '1 ^How' "$(tabs) $(line)"
+editor 'Thanks first' 'say Thatcher here' 'done. Thawing now'
+typed 'ok. Tha'
+expect ". : only words that begin a sentence, the . kept" 'ok. Thanks |ok. Thawing |ok. Tha|' "$(cycle 1 2 3)"
+editor 'say Thatcher here' 'really? Thawing now' 'yes! Thanks then'
+typed 'wow! Tha'
+expect "  ... ! and ? end sentences too" 'wow! Thawing |wow! Thanks |wow! Tha|' "$(cycle 1 2 3)"
+editor 'say Thatcher here' 'done. Thawing now'
+typed 'why? Tha'; dab expand
+expect "  ... typed after ? as well" 'why? Thawing ' "$(line)"
+editor 'Thanks first' 'say Thatcher here' 'done. Thawing now'
+typed 'ok. Thatc'; dab expand
+expect "  ... none such: all words" 'ok. Thatcher ' "$(line)"
+editor 'say Whale here' '- Which one' '  * Whatever' '  2. Whence'
+typed '- Wh'
+expect "- : only the first words of list items, the - kept" '- Which |- Whatever |- Whence |- Wh|' "$(cycle 1 2 3 4)"
+editor 'say Whale here' '- Which one'
+typed '- Whal'; dab expand
+expect "  ... none such: all words" '- Whale ' "$(line)"
+editor 'say Whale here' '- Which one is it'
+typed '- Wh'; dab tab tab
+expect "  ... and Tab goes on in the item" '- Which one ' "$(line)"
 
 echo "...word: up to the word"
 PARA=('we keep them in ppi for now, while' '  you are changing them. Move them out once' '  they settle, so ppi consumes. Then more')
