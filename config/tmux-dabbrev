@@ -35,7 +35,8 @@
 # at once.
 #
 #   ^WORD, ^ WORD (on the screen's words) only words that begin a line; the
-#                 ^ goes; -WORD the same for list items, else as before.
+#                 ^ goes; -WORD the same for list items and .WORD for
+#                 sentence starts, else as before, the mark kept.
 #                 After "- " (or * • + 1. 1)), only the first words
 #                 of list items; after ". " (! ?), only words that begin a
 #                 sentence; those stay, and with no such match, all words.
@@ -293,6 +294,11 @@ def sentence_start(pane, row, a):
     return not above or bool(re.search(r'[.!?:]["\'’”)\]]*$', above))
 
 
+# A mark just before a word (-Wh, .th): only the words at such places, and the
+# mark goes; with none such, all words, the mark kept (-Wall, .bashrc).
+MARKS = {'-': list_item, '.': sentence_start}
+
+
 def ranked(pane, start, accept, before, cursor_row=True, where=None):
     """[(text, row, end)] for the things on the pane's screen (words, coloured
     spans, paths) that ACCEPT(text, kind) turns into a TEXT: the coloured
@@ -509,8 +515,9 @@ class Screen:
         m = TYPED.search(pane.before)
         if m:
             lead = pane.before[:m.start()]
-            if re.search(r'(?:^|\s)-$', lead):     # -word: list items, the - goes
-                return m.start() - 1, '-' + m.group()
+            mark = re.search(r'(?:^|(?<=\s))[-.]$', lead)
+            if mark:                                # -word, .word: see MARKS
+                return m.start() - 1, mark.group() + m.group()
             anchored = LIST_LEAD.search(lead) or SENTENCE_LEAD.search(lead)
             # After an anchor the matches are few: one letter is enough.
             return (m.start(), m.group()) if anchored or len(m.group()) >= least else None
@@ -524,10 +531,10 @@ class Screen:
         if typed.startswith('^'):                   # line starts only; the ^ goes
             word = typed.lstrip('^ ')
             return self.words(pane, start + len(typed) - len(word), word, line_start)
-        if typed.startswith('-'):                   # -word: list items, the - gone; else as before
+        if typed[:1] in MARKS:                      # -word, .word: the mark gone; else as before
             word = typed[1:]
-            return self.words(pane, start + 1, word, list_item) or [
-                {**alt, 'text': '-' + alt['text']} for alt in self.words(pane, start + 1, word)]
+            return self.words(pane, start + 1, word, MARKS[typed[0]]) or [
+                {**alt, 'text': typed[0] + alt['text']} for alt in self.words(pane, start + 1, word)]
         lead = pane.before[:start]                  # - and . stay: they are text too
         where = list_item if LIST_LEAD.search(lead) else sentence_start if SENTENCE_LEAD.search(lead) else None
         return self.words(pane, start, typed, where) or (self.words(pane, start, typed) if where else [])

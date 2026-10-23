@@ -258,7 +258,7 @@ typed '- Wh'; dab tab tab
 expect "  ... and Tab goes on in the item" '- Which one ' "$(line)"
 
 LIST=('Thanks first' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
-for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which ' '. T|. Thanks ' '-W|Which '; do
+for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which ' '. T|. Thanks ' '-W|Which ' '.t|Thanks '; do
     editor "${LIST[@]}"
     typed "${t%%|*}"; dab tab
     expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
@@ -266,6 +266,12 @@ done
 editor "${LIST[@]}"
 typed '-Wal'; dab tab
 expect "  ... -W with no such list item: as before, the - kept" '-Wall ' "$(line)"
+editor 'Thanks first' 'say Thatcher here' 'done. Thawing now' 'see .thatrc'
+typed '.th'
+expect ".word: sentence starts, the . gone" 'Thanks |Thawing |.th|' "$(cycle 1 2 3)"
+editor 'say Thatcher here' 'see .thatrc'
+typed 'x .thatr'; dab tab
+expect "  ... with none such: as before, the . kept" 'x .thatrc ' "$(line)"
 editor "${LIST[@]}"
 typed 'W'; dab tab
 expect "  ... one letter alone still goes through" '1 W' "$(tabs) $(line)"
