@@ -38,7 +38,7 @@
 #                 ^ goes. After "- " (or * • + 1. 1)), the list items that
 #                 start so, each whole (the rows it wraps onto too); after
 #                 ". " (! ? :), the sentences that start so, each whole (to
-#                 . ! ? or :, or the block's end); those stay,
+#                 . ! ? or :, or a blank row or list item); those stay,
 #                 and with no such match, all words. -WORD and .WORD the
 #                 same, the mark gone (else as before, the mark kept); 2.
 #                 (or 2)) the items numbered so, whole.
@@ -49,7 +49,7 @@
 #                 before ... leaves off on screen up to a word starting with
 #                 WORD, with what is on it (consumes.), line breaks as
 #                 spaces; ...$ to the end of the line, ...$$ to the end of
-#                 the block (a blank row or the next list item), .... (or
+#                 the block (up to a blank row, lists too), .... (or
 #                 ...) to the end of the sentence, ...? ...! to the next
 #                 such mark; .. does as ..., and a space may follow either.
 #                 After an anchored query (^T..$$, -W ..cl): each match of
@@ -118,7 +118,8 @@ UPTO_TYPED = re.compile(r"(?:^|(?<=[\s\w]))" + UPTO + "$")            # after a 
 # prefix), taken on to its first such end.
 QUERY = r"(?:\^ ?|[-.=])\w[\w'/-]*"
 QUERY_UPTO = re.compile(r"(?:^|(?<=\s))(?P<query>" + QUERY + r"(?: [\w'/-]+)*) ?(?P<op>" + UPTO + ")$")
-BLOCK_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')       # a blank row, a list item
+BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
+PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
@@ -239,22 +240,31 @@ def styled(line):
 
 def spans(plain, escaped):
     """[(start, end)] in PLAIN of the runs of text in a style of their own (not
-    the default), trimmed of spaces and of punctuation at the end (**swiz:**
-    in Markdown); ESCAPED is the line with its escapes. Not a run that is all
-    the line's text, as a diff line or a grey one is."""
+    the default), and of each stretch in styles not the default that holds
+    more than one of them (**Does `When` set up?**: the bold sentence and its
+    coloured word); trimmed of spaces and of , : ; at the end (**swiz:**).
+    ESCAPED is the line with its escapes. Not a run that is all the line's
+    text, as a diff line or a grey one is."""
     cells = styled(escaped)
     if ''.join(ch for ch, _ in cells).rstrip() != plain.rstrip():
         return []                               # the screen changed between the captures
-    out, i = [], 0
-    while i < len(cells):
-        j = i
-        while j < len(cells) and cells[j][1] == cells[i][1]:
-            j += 1
+
+    def runs(same):
+        out, i = [], 0
+        while i < len(cells):
+            j = i
+            while j < len(cells) and same(cells[j][1], cells[i][1]):
+                j += 1
+            if cells[i][1] != DEFAULT:
+                out.append((i, j))
+            i = j
+        return out
+    out = []
+    for i, j in runs(lambda x, y: x == y) + runs(lambda x, y: (x == DEFAULT) == (y == DEFAULT)):
         text = plain[i:j]
-        a, b = i + len(text) - len(text.lstrip()), i + len(text.rstrip().rstrip('.,:;!?'))
-        if cells[i][1] != DEFAULT and b - a >= 2 and plain[a:b] != plain.strip():
+        a, b = i + len(text) - len(text.lstrip()), i + len(text.rstrip().rstrip(',:;'))
+        if b - a >= 2 and plain[a:b] != plain.strip() and (a, b) not in out:
             out.append((a, b))
-        i = j
     return out
 
 
@@ -353,11 +363,12 @@ def list_items(pane, start, typed, number=None):
 
 def sentences(pane, start, word):
     """Alternatives for the sentences on screen that start with WORD (smart
-    case), each whole: up to its end (. ! ? : and a space), or its block's
-    when that comes first; line breaks as spaces."""
+    case), each whole: up to its end (. ! ? : and a space), or when that
+    comes first a blank row or a list item; line breaks as spaces."""
     out, seen = [], set()
     for text, following in candidates(pane, start, word, sentence_start, every=True):
-        found, block = ends(following, '.'), ends(following, '$$')[0]
+        m = PART_END.search(following)
+        found, block = ends(following, '.'), m.start() if m else len(following.rstrip())
         end = found[0] if found and found[0] <= block else block
         whole = text + taken(following, end)
         if whole not in seen:
@@ -404,7 +415,7 @@ def ranked(pane, start, accept, before, cursor_row=True, where=None):
     def key(f):
         group, ctx, row, a, text, _ = f
         order = ORDERS[pane.order(not group)]
-        return (group, ctx, *order(pane, row, a, start, counts[text]), row, a, text)
+        return (group, ctx, *order(pane, row, a, start, counts[text]), row, a, -len(text), text)
     return [(text, row, b) for *_, row, _, text, b in sorted(found, key=key)]
 
 
@@ -492,7 +503,7 @@ def up_to(pane, start, word):
     off up to a word that starts with WORD (smart case) and what is on it
     (consumes.), its line breaks one space; one alternative for each such
     word, in order, so M-/ goes on to the next. WORD $: to the end of the
-    line; $$: to the end of the block (a blank row, or the next list item).
+    line; $$: to the end of the block (up to a blank row, lists and all).
     From the text the last Tab took its words from, when the state it left
     is for the text left of START; then from after each other place on
     screen where that text's last word is (ranked as Tab's continuations).

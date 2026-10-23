@@ -250,6 +250,9 @@ expect "  ... over a line break" 'The other direction is long here. ' "$(line)"
 editor 'The model in four sentences' '' 'more'
 typed '.th'; dab tab
 expect "  ... with no end, to the block's" 'The model in four sentences ' "$(line)"
+editor 'The first item' '- The second' 'x'
+typed '.th'; dab tab
+expect "  ... or to the next list item" 'The first item ' "$(line)"
 editor 'it goes: on and on. done'
 typed '.on'; dab tab
 expect "  ... a sentence starts after :" 'on and on. ' "$(line)"
@@ -299,6 +302,12 @@ editor "${LIST[@]}"
 typed 'W'; dab tab
 expect "  ... one letter alone still goes through" '1 W' "$(tabs) $(line)"
 
+editor $'  \e[1mDoes \e[38;5;105mWhen\e[39m set up a listener?\e[0m Not quite. A \e[38;5;105mWhen\e[39m is'
+typed '=D'; dab tab
+expect "=: a stretch in styles not the default is one, longer first at a place" 'Does When set up a listener? ' "$(line)"
+editor $'  \e[1mDoes \e[38;5;105mWhen\e[39m set up a listener?\e[0m Not quite. A \e[38;5;105mWhen\e[39m is'
+typed '=Wh'; dab tab
+expect "  ... the runs in it too" 'When ' "$(line)"
 ENT=($'a \e[36mWhen\e[39m arrives' 'plain Whale and When' $'\e[34mWhen /someone/ wishes /p/\e[39m is it')
 editor "${ENT[@]}"
 typed '=wh'
@@ -351,9 +360,9 @@ editor "${PARA[@]}" '' 'next paragraph'
 typed 'keep them ...$$'; dab tab
 expect "...\$\$: to the end of the block (a blank line)" \
     'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. Then more ' "$(line)"
-editor '- one item here' '  wraps on' '- two' 'x'
+editor '- one item here' '  wraps on' '- two' 'x' '' 'after'
 typed 'one ...$$'; dab tab
-expect "  ... or the next list item" 'one item here wraps on ' "$(line)"
+expect "  ... lists in it too: up to a blank row" 'one item here wraps on - two x ' "$(line)"
 for op in '..cons' '... cons' '.. cons'; do
     editor "${PARA[@]}"
     typed "keep them in $op"; dab tab
