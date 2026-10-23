@@ -128,6 +128,17 @@ print('ok')
 EOF
 )"
 
+expect "^ is the start of each line with text, past spaces and marks (⏺ │)" ok "$(python3 - "$CLICK" <<'EOF'
+import importlib.machinery as m, sys
+sys.dont_write_bytecode = True
+c = m.SourceFileLoader('c', sys.argv[1]).load_module()
+screen = ['first line', '   indented', '', '⏺ said this', '│ in a box', '- item ^ here', '日本 wide']
+got = c.matches(screen, '^')
+assert got == [(0, 0), (1, 3), (3, 2), (4, 2), (5, 0), (6, 0)], got
+print('ok')
+EOF
+)"
+
 echo "programs that ask for mouse events get a click"
 recorder sgr 'alpha beta gamma' 'bravo'
 pick g

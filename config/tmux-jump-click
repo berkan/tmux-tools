@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # tmux-jump-click PANE CLIENT — jump to a place in PANE picked by keyboard, as
 # tmux-jump picks one: type a character, then the label shown on the match.
+# ^ labels the start of each line with text.
 #
 # The labels are drawn in a borderless popup laid exactly over the pane, so
 # nothing is written into the program's own terminal. A place the program's
@@ -46,8 +47,8 @@ import tty
 import unicodedata
 
 LABEL_KEYS = 'asdfghjklqwertyuiopzxcvbnm'
-DIM = '\x1b[0;38;5;244m'
-FAINT = '\x1b[0;2;38;5;244m'
+DIM = '\x1b[0;38;5;240m'                 # not washed out: no faint attribute,
+FAINT = '\x1b[0;38;5;244m'               # and greys dark enough to read
 BRIGHT = '\x1b[0m'
 RULE_CHARS = '─━═'
 LABEL = '\x1b[0;1;38;5;231;48;5;160m'
@@ -83,8 +84,17 @@ def is_word(ch):
 
 def matches(screen, key):
     """(row, col) of each place KEY can jump to: a match that starts a word, or
-    any match when KEY is not a word character. Case-insensitive."""
+    any match when KEY is not a word character. Case-insensitive. ^ is the
+    start of each line with text: past spaces and marks that are not ASCII
+    (⏺ │ ❯), so on the text itself."""
     found = []
+    if key == '^':
+        for row, line in enumerate(screen):
+            for col, ch in cells(line):
+                if not (ch.isspace() or (not ch.isascii() and not ch.isalnum())):
+                    found.append((row, col))
+                    break
+        return found
     for row, line in enumerate(screen):
         prev = ' '
         for col, ch in cells(line):

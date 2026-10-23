@@ -35,9 +35,11 @@
 # at once.
 #
 #   ^WORD, ^ WORD (on the screen's words) only words that begin a line; the
-#                 ^ goes. After "- " (or * • + 1. 1)), only the first words
+#                 ^ goes; -WORD the same for list items, else as before.
+#                 After "- " (or * • + 1. 1)), only the first words
 #                 of list items; after ". " (! ?), only words that begin a
 #                 sentence; those stay, and with no such match, all words.
+#                 After an anchor one letter is enough for Tab.
 #   ...WORD       (on the screen's words) everything from where the text
 #                 before ... leaves off on screen up to a word starting with
 #                 WORD, with what is on it (consumes.), line breaks as
@@ -506,7 +508,12 @@ class Screen:
         least = 2 if key == 'tab' else 1
         m = TYPED.search(pane.before)
         if m:
-            return (m.start(), m.group()) if len(m.group()) >= least else None
+            lead = pane.before[:m.start()]
+            if re.search(r'(?:^|\s)-$', lead):     # -word: list items, the - goes
+                return m.start() - 1, '-' + m.group()
+            anchored = LIST_LEAD.search(lead) or SENTENCE_LEAD.search(lead)
+            # After an anchor the matches are few: one letter is enough.
+            return (m.start(), m.group()) if anchored or len(m.group()) >= least else None
         if len(re.search(r'\S*$', pane.before).group()) >= least:
             return len(pane.before), ''         # punctuation only: for the spans that start with it
         return None
@@ -517,6 +524,10 @@ class Screen:
         if typed.startswith('^'):                   # line starts only; the ^ goes
             word = typed.lstrip('^ ')
             return self.words(pane, start + len(typed) - len(word), word, line_start)
+        if typed.startswith('-'):                   # -word: list items, the - gone; else as before
+            word = typed[1:]
+            return self.words(pane, start + 1, word, list_item) or [
+                {**alt, 'text': '-' + alt['text']} for alt in self.words(pane, start + 1, word)]
         lead = pane.before[:start]                  # - and . stay: they are text too
         where = list_item if LIST_LEAD.search(lead) else sentence_start if SENTENCE_LEAD.search(lead) else None
         return self.words(pane, start, typed, where) or (self.words(pane, start, typed) if where else [])

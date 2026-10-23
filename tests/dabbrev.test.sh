@@ -257,6 +257,19 @@ editor 'say Whale here' '- Which one is it'
 typed '- Wh'; dab tab tab
 expect "  ... and Tab goes on in the item" '- Which one ' "$(line)"
 
+LIST=('Thanks first' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
+for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which ' '. T|. Thanks ' '-W|Which '; do
+    editor "${LIST[@]}"
+    typed "${t%%|*}"; dab tab
+    expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
+done
+editor "${LIST[@]}"
+typed '-Wal'; dab tab
+expect "  ... -W with no such list item: as before, the - kept" '-Wall ' "$(line)"
+editor "${LIST[@]}"
+typed 'W'; dab tab
+expect "  ... one letter alone still goes through" '1 W' "$(tabs) $(line)"
+
 echo "...word: up to the word"
 PARA=('we keep them in ppi for now, while' '  you are changing them. Move them out once' '  they settle, so ppi consumes. Then more')
 editor "${PARA[@]}"
