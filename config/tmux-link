@@ -3,9 +3,13 @@
 # hyperlink (OSC 8) under PANE's copy-mode cursor: on its target, not the
 # text shown. Claude Code links each file it names, showing a short path
 # (drafts/x.md) for the full one (file:///Users/me/notes/drafts/x.md); a
-# file link's target is its path.
+# file link's target is its path. Off a link, copy, quote, paste and target
+# take the entity under the cursor whole, as dabbrev knows them (entities in
+# tmux-dabbrev, beside this script): a coloured span, a CamelCase word, a
+# run of Capitalised Words (the kinds in @dabbrev-entities); the longest that
+# holds the cursor.
 #
-#   open    a file or folder: $VISUAL (else $EDITOR, else vi) in a popup on
+#   open    (links only) a file or folder: $VISUAL (else $EDITOR, else vi) in a popup on
 #           CLIENT; one not in this container: a message. Any other link:
 #           nothing in a container can open it (no browser), so it is
 #           copied, with a message.
@@ -21,6 +25,8 @@
 # The link is read off the screen (capture-pane -e). Before tmux 3.5 (the
 # containers have 3.4) copy mode keeps no links, so there the pane leaves
 # copy mode to be read, and off a link goes back into it, at the same place.
+import importlib.machinery
+import importlib.util
 import os
 import re
 import shlex
@@ -31,6 +37,16 @@ import urllib.parse
 
 OSC8 = re.compile(r'\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)')
 ESCAPE = re.compile(r'\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
+
+
+def dabbrev():
+    """tmux-dabbrev, beside this script, as a module (for its entities)."""
+    sys.dont_write_bytecode = True              # no __pycache__ beside the scripts
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmux-dabbrev')
+    loader = importlib.machinery.SourceFileLoader('tmux_dabbrev', path)
+    module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
+    loader.exec_module(module)
+    return module
 
 
 def tmux(*args, check=True):
@@ -103,10 +119,21 @@ def back_to(pane, place, line):
         tmux('send-keys', '-t', pane, '-X', '-N', str(count), cmd)
 
 
+def entity_at(line, cx):
+    """The longest entity (dabbrev's) of LINE, as capture-pane -e gives it,
+    that holds cell CX, or ''."""
+    d = dabbrev()
+    plain = ESCAPE.sub('', line)
+    i = char_index(plain, cx)
+    found = [(a, b) for a, b in d.entities(plain, line, d.entity_kinds()) if a <= i < b]
+    return max((plain[a:b] for a, b in found), key=len, default='')
+
+
 def target(pane, keep_mode):
-    """The target of the link under PANE's copy cursor, a file link's as its
-    path; '' off a link. Copy mode may be left to read it (before tmux 3.5):
-    then it is gone back to when there is no link or KEEP_MODE."""
+    """(link, entity) under PANE's copy cursor: the link's target, a file
+    link's as its path, and the entity there (entity_at); '' for none. Copy
+    mode may be left to read them (before tmux 3.5): then it is gone back to
+    when there is neither or KEEP_MODE."""
     place = tuple(map(int, tmux('display-message', '-p', '-t', pane,
                                 '#{copy_cursor_x} #{copy_cursor_y} #{scroll_position}').split()))
     cx, cy, scroll = place
@@ -116,10 +143,11 @@ def target(pane, keep_mode):
     row = str(cy - scroll)                      # 0 is the top of the screen; history is above
     line = tmux('capture-pane', '-p', '-e', '-N', '-t', pane, '-S', row, '-E', row).rstrip('\n')
     link = link_at(line, cx)
-    if left and (keep_mode or not link):
+    entity = '' if link else entity_at(line, cx)
+    if left and (keep_mode or not (link or entity)):
         back_to(pane, place, line)
     url = urllib.parse.urlsplit(link)
-    return urllib.parse.unquote(url.path) if url.scheme == 'file' else link
+    return (urllib.parse.unquote(url.path) if url.scheme == 'file' else link), entity
 
 
 def leave(pane):
@@ -148,7 +176,8 @@ def open_(pane, client, text):
 
 
 def main(action, pane, client=None, command=None):
-    text = target(pane, keep_mode=action in ('target', 'open'))
+    link, entity = target(pane, keep_mode=action in ('target', 'open'))
+    text = link if action == 'open' else link or entity
     if action == 'target':
         print(text)
     elif not text:

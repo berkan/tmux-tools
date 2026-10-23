@@ -369,6 +369,41 @@ editor $'\e[31mred\e[0m'
 typed 'r'; dab expand
 expect "  ... nor is the word it is" 'red ' "$(line)"
 
+echo "entities: coloured spans, CamelCase, Capitalised Words"
+editor 'parsed one' 'x ParserState'
+typed 'pa'; dab expand
+expect "a CamelCase word ranks as a coloured span" 'ParserState ' "$(line)"
+editor 'getter one' 'x getValue'
+typed 'ge'; dab expand
+expect "  ... so does camelCase" 'getValue ' "$(line)"
+editor 'claude is' 'see Claude Code here'
+typed 'cl'; dab expand
+expect "two or more Capitalised Words are one" 'Claude Code ' "$(line)"
+editor 'claude is' 'see Claude Code Opus here'
+typed 'cl'; dab expand
+expect "  ... as many as there are" 'Claude Code Opus ' "$(line)"
+editor 'clear' 'Claude alone'
+typed 'cl'; dab expand
+expect "  ... one alone is a word" 'clear ' "$(line)"
+editor 'whence' 'When I go'
+typed 'wh'; dab expand
+expect "  ... a word of one letter is not in a run" 'whence ' "$(line)"
+editor 'htmlx' 'the HTML here'
+typed 'ht'; dab expand
+expect "capitals alone are no CamelCase" 'htmlx ' "$(line)"
+tmux set -g @dabbrev-entities 'coloured capitalised'
+editor 'parsed one' 'x ParserState and Claude Code'
+typed 'pa'; dab expand
+expect "@dabbrev-entities: the kinds wanted (no camelcase here)" 'parsed ' "$(line)"
+editor 'claude is' 'see Claude Code here'
+typed 'cl'; dab expand
+expect "  ... and the others still" 'Claude Code ' "$(line)"
+tmux set -g @dabbrev-entities ''
+editor $'abcd one' $'see \e[36mabc-123:45\e[0m'
+typed 'ab'; dab expand
+expect "  ... none: not even coloured spans" 'abcd ' "$(line)"
+tmux set -gu @dabbrev-entities
+
 echo "orders (@dabbrev-order)"
 ORDERED=(gamma x x x garden x gallop x gazebo x)     # rows 0-9; the cursor's is 10 of 12
 order() {

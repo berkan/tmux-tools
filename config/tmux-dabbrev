@@ -25,14 +25,17 @@
 #   program       Tab on a word starting @ or /: sent on to the program (its
 #                 own file and command completion).
 #   screen        the words on the pane's screen (not the scrollback), and
-#                 its coloured spans: runs of text in a style of their own,
-#                 such as an id or a path, not a whole line; below.
+#                 its entities: coloured spans (runs of text in a style of
+#                 their own, such as an id or a path, not a whole line),
+#                 CamelCase words and runs of Capitalised Words, those of
+#                 the kinds in @dabbrev-entities (default: coloured
+#                 camelcase capitalised; '' none); below.
 #
 # A completion from the screen ends in a space, so the next press can follow
 # at once.
 #
 #   expand (M-/)  the best word on screen that starts with what was typed:
-#                 the coloured spans before any word (and only they for
+#                 the entities before any word (and only they for
 #                 punctuation alone, such as ["); within each, one after the
 #                 words typed before it, as many as possible, then in the
 #                 order in @dabbrev-span-order for the spans, @dabbrev-order
@@ -82,6 +85,12 @@ PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
 ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
 DEFAULT = (None, None, frozenset())             # (foreground, background, attributes)
+# Entities beside the coloured spans: a CamelCase word (camelCase, iPhone: a
+# capital after a small letter or digit), and two or more Capitalised Words
+# of two letters or more each (not "When I").
+CAMEL = re.compile(r'(?<![\w])[A-Za-z0-9]*[a-z0-9][A-Z][A-Za-z0-9]*(?![\w])')
+ENTITIES_OPTION, ENTITIES_DEFAULT = '@dabbrev-entities', 'coloured camelcase capitalised'
+CAPITALISED = re.compile(r"(?<![\w'’-])[A-Z][\w'’-]+(?: [A-Z][\w'’-]+)+(?![\w'’-])")
 KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?')}
 TAB_OPTION, TAB_DEFAULT = '@dabbrev-tab-commands', 'claude codex pi node agy gemini'
 CONTEXT = 3                     # words before what was typed that rank a match
@@ -207,6 +216,28 @@ def spans(plain, escaped):
             out.append((a, b))
         i = j
     return out
+
+
+def entity_kinds():
+    """The kinds of entity named in @dabbrev-entities: coloured, camelcase,
+    capitalised (unset: all; empty: none)."""
+    value = tmux('show-options', '-gqv', ENTITIES_OPTION)
+    if value == '' and not tmux('show-options', '-gq', ENTITIES_OPTION):
+        value = ENTITIES_DEFAULT
+    return set(value.split())
+
+
+def entities(plain, escaped, kinds):
+    """[(start, end)] in PLAIN of its entities of the KINDS (entity_kinds):
+    coloured spans (spans; ESCAPED is the line with its escapes), CamelCase
+    words, runs of Capitalised Words. In dabbrev they rank as one, before the
+    words; in copy mode y, p and r take the one under the cursor
+    (tmux-link)."""
+    found = spans(plain, escaped) if 'coloured' in kinds and escaped is not None else []
+    for kind, pattern in (('camelcase', CAMEL), ('capitalised', CAPITALISED)):
+        if kind in kinds:
+            found += [m.span() for m in pattern.finditer(plain)]
+    return found
 
 
 def paths(line):
@@ -502,7 +533,7 @@ class Pane:
         self.screen = tmux('capture-pane', '-p', '-N', '-t', pane).split('\n')
         self.cy = cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
-        self._cwd = self._escaped = self._order = None
+        self._cwd = self._escaped = self._order = self._kinds = None
 
     def cwd(self):
         if self._cwd is None:
@@ -520,17 +551,18 @@ class Pane:
         return self._order[span]
 
     def items(self, row):
-        """[(start, end, kind)] of ROW: its words, coloured spans and paths, by
-        start, the longest first."""
+        """[(start, end, kind)] of ROW: its words, paths and entities (coloured
+        spans and the rest, kind 'span'), by start, the longest first."""
         if self._escaped is None:
             self._escaped = tmux('capture-pane', '-p', '-e', '-N', '-t', self.pane).split('\n')
         line = self.screen[row]
         found = {(m.start(), m.end()): 'word' for m in WORD.finditer(line)}
         for a, b in paths(line):
             found.setdefault((a, b), 'path')
-        if row < len(self._escaped):
-            for a, b in spans(line, self._escaped[row]):
-                found[(a, b)] = 'span'                  # a coloured word too
+        if self._kinds is None:
+            self._kinds = entity_kinds()
+        for a, b in entities(line, self._escaped[row] if row < len(self._escaped) else None, self._kinds):
+            found[(a, b)] = 'span'                      # a coloured or CamelCase word too
         return sorted(((a, b, kind) for (a, b), kind in found.items()), key=lambda f: (f[0], -f[1]))
 
     def state_file(self):

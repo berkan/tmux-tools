@@ -112,6 +112,36 @@ prog "see $(link "$FURL" notes.md) here"
 at 0 1; run paste "$PANE"
 expect "off a link: nothing, still in copy mode" "1 " "$(in_mode)$(typed) "
 
+echo "entities: coloured spans, CamelCase, Capitalised Words"
+prog $'see \e[36mabc-123:45\e[0m and ParserState, Claude Code Opus here' 'plain words only'
+at 0 6; run copy "$PANE"
+expect "y on a coloured span: all of it" 'abc-123:45' "$(tmux show-buffer)"
+at 0 21; run copy "$PANE"
+expect "  ... on CamelCase" 'ParserState' "$(tmux show-buffer)"
+at 0 41; run copy "$PANE"
+expect "  ... on Capitalised Words, from any of them" 'Claude Code Opus' "$(tmux show-buffer)"
+at 0 6; run paste "$PANE"
+expect "p: typed in" 'abc-123:45' "$(typed)"
+prog $'see \e[36mabc-123:45\e[0m here'
+at 0 6; run quote "$PANE"
+expect "r: quoted" 're: "abc-123:45" -- ' "$(typed)"
+prog $'see \e[36mabc-123:45\e[0m and plain here'
+at 0 19; run copy "$PANE" '' cursor-up
+expect "on a plain word: the key's own command" "1 0" "$(in_mode) $(tmux display -p -t "$PANE" '#{copy_cursor_y}')"
+tmux send -t "$PANE" -X cancel
+prog $'see \e[36mabc-123:45\e[0m here'
+at 0 6
+expect "o on an entity that is no link: the key's own command" "1 0" \
+    "$(run open "$PANE" '' cursor-up; echo "$(in_mode) $(tmux display -p -t "$PANE" '#{copy_cursor_y}')")"
+tmux send -t "$PANE" -X cancel
+
+tmux set -g @dabbrev-entities 'coloured'
+prog $'see \e[36mabc-123:45\e[0m and ParserState here'
+at 0 21; run copy "$PANE" '' cursor-up
+expect "@dabbrev-entities applies here too (no camelcase)" "1 0" "$(in_mode) $(tmux display -p -t "$PANE" '#{copy_cursor_y}')"
+tmux send -t "$PANE" -X cancel
+tmux set -gu @dabbrev-entities
+
 echo "open"
 mkdir -p "$SCRATCH/o"
 TMUX_TMPDIR="$SCRATCH/o" tmux -f /dev/null new-session -d -x 100 -y 11 \
