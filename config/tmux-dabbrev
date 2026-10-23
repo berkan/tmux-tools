@@ -47,7 +47,10 @@
 #   ...WORD       (on the screen's words) everything from where the text
 #                 before ... leaves off on screen up to a word starting with
 #                 WORD, with what is on it (consumes.), line breaks as
-#                 spaces: from where the last Tab took its words, else from
+#                 spaces; ...$ to the end of the line, ...$$ to the end of
+#                 the block (a blank row or the next list item), .... (or
+#                 ...) to the end of the sentence, ...? ...! to the next
+#                 such mark; .. does as ..., and a space may follow either: from where the last Tab took its words, else from
 #                 where the words before ... are. M-/ goes on to the next
 #                 such word; Tab after it, word by word.
 #
@@ -101,7 +104,12 @@ NUMBER_TYPED = re.compile(r'(?:^|(?<=\s))\d+[.)]$')              # 2. 2)
 LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins a list item
 LIST_LEAD = re.compile(r'(?:^|\s)(?:[-*•+]|\d+[.)])\s$')         # - word
 SENTENCE_LEAD = re.compile(r'[.!?]["\'’”)\]]*\s$')               # . word
-UPTO_TYPED = re.compile(r"(?:^|(?<=\s))\.\.\.\w[\w'./-]*$")      # ...word
+# ..word or ...word (a space between or none): up to the word; $ the line's
+# end, $$ the block's; . the sentence's (so "..." and "...." too), ? or ! the
+# next such mark.
+UPTO = r"\.\.\.? ?(\w[\w'./-]*|\$\$?|[.!?])"
+UPTO_TYPED = re.compile(r"(?:^|(?<=\s))" + UPTO + "$")
+BLOCK_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')       # a blank row, a list item
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
@@ -439,14 +447,18 @@ def up_to(pane, start, word):
     """...WORD: the text on screen from where the text left of START leaves
     off up to a word that starts with WORD (smart case) and what is on it
     (consumes.), its line breaks one space; one alternative for each such
-    word, in order, so M-/ goes on to the next. From the text the last Tab
-    took its words from, when the state it left is for the text left of
-    START; then from after each other place on screen where that text's last
-    word is (ranked as Tab's continuations)."""
+    word, in order, so M-/ goes on to the next. WORD $: to the end of the
+    line; $$: to the end of the block (a blank row, or the next list item).
+    From the text the last Tab took its words from, when the state it left
+    is for the text left of START; then from after each other place on
+    screen where that text's last word is (ranked as Tab's continuations).
+    What was typed after that last word (". " of "4. ") is not taken again."""
     anchor = pane.before[:start]
-    words = WORD.findall(anchor)
-    if not words:
+    found = list(WORD.finditer(anchor))
+    if not found:
         return []
+    words = [m.group() for m in found]
+    tail = anchor[found[-1].end():].strip()
     sources = []
     state = pane.state(before=anchor)
     if state and state.get('backend') == 'screen':
@@ -459,12 +471,23 @@ def up_to(pane, start, word):
         sources.append(after(pane.screen, pane.cy, row, end, 0))
     out, seen = [], set()
     for following in sources:
-        for m in WORD.finditer(following):
-            if not smartcase(word, m.group()):
-                continue
-            end = m.start() + len(re.match(r'\S*', following[m.start():]).group())
+        if tail and following.lstrip(' ').startswith(tail):
+            following = following.lstrip(' ')[len(tail):]
+        if word == '$':
+            m = re.search(r'\S[^\n]*', following)
+            ends = [m.end()] if m else []
+        elif word == '$$':
+            m = BLOCK_END.search(following)
+            ends = [m.start() if m else len(following.rstrip())]
+        elif word in '.?!':                     # . a sentence's end; ? ! that mark
+            marks = '.!?' if word == '.' else word
+            ends = [m.end() for m in re.finditer(r'[' + re.escape(marks) + r']["\'’”)\]]*(?=\s|$)', following)]
+        else:
+            ends = [m.start() + len(re.match(r'\S*', following[m.start():]).group())
+                    for m in WORD.finditer(following) if smartcase(word, m.group())]
+        for end in ends:
             text = re.sub(r'\s*\n\s*', ' ', following[:end])
-            text = (text.lstrip() if anchor[-1:].isspace() else text) + ' '
+            text = (text.lstrip() if anchor[-1:].isspace() else text).rstrip() + ' '
             if text not in seen:
                 seen.add(text)
                 out.append({'text': text, 'following': following[end:]})
@@ -569,8 +592,8 @@ class Screen:
         return None
 
     def complete(self, pane, start, typed):
-        if typed.startswith('...'):
-            return up_to(pane, start, typed[3:])
+        if typed.startswith('..'):
+            return up_to(pane, start, re.fullmatch(UPTO, typed).group(1))
         if typed.startswith('^'):                   # line starts only; the ^ goes
             word = typed.lstrip('^ ')
             return self.words(pane, start + len(typed) - len(word), word, line_start)

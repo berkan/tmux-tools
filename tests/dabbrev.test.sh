@@ -327,6 +327,42 @@ expect "  ... and the next" 'keep them in ppi for now, while you are changing th
 editor "${PARA[@]}"
 typed 'keep them in ...zzz'; dab tab
 expect "no such word after: Tab goes through" '1 keep them in ...zzz' "$(tabs) $(line)"
+editor '4. Where Folk came from. Folk is a' '   physical system. Programs run' 'x'
+typed '4. ...P'; dab tab
+expect "  ... what was typed after the last word is not taken twice (4. )" \
+    '4. Where Folk came from. Folk is a physical system. Programs ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them ...$'
+dab tab
+expect "...\$: to the end of the line" 'keep them in ppi for now, while ' "$(line)"
+editor "${PARA[@]}" '' 'next paragraph'
+typed 'keep them ...$$'; dab tab
+expect "...\$\$: to the end of the block (a blank line)" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. Then more ' "$(line)"
+editor '- one item here' '  wraps on' '- two' 'x'
+typed 'one ...$$'; dab tab
+expect "  ... or the next list item" 'one item here wraps on ' "$(line)"
+for op in '..cons' '... cons' '.. cons'; do
+    editor "${PARA[@]}"
+    typed "keep them in $op"; dab tab
+    expect "${op}: as ...cons (.. or ..., a space or none)" \
+        'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. ' "$(line)"
+done
+for op in '....' '...' '.. .'; do
+    editor "${PARA[@]}"
+    typed "keep them $op"
+    expect "${op}: to the end of the sentence, M-/ the next" \
+        'keep them in ppi for now, while you are changing them. |keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. |' "$(cycle 1 2)"
+done
+editor 'we ask is it so? yes! see file.py now. done' 'x'
+typed 'ask ...?'; dab tab
+expect "...?: to the next ?" 'ask is it so? ' "$(line)"
+editor 'we ask is it so? yes! see file.py now. done' 'x'
+typed 'ask ..!'; dab tab
+expect "..!: to the next !" 'ask is it so? yes! ' "$(line)"
+editor 'we ask is it so? yes! see file.py now. done' 'x'
+typed 'see ...'; dab tab
+expect "  ... a . inside a word ends no sentence" 'see file.py now. ' "$(line)"
 editor "${PARA[@]}"
 typed '...cons'; dab tab
 expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
