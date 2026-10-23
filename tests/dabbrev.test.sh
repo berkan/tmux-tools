@@ -235,15 +235,27 @@ expect "  ... ^ and a space the same" 'Howdy |Howling |^ How|' "$(cycle 1 2 3)"
 editor 'see Howitzer here'
 typed '^How'; dab tab
 expect "  ... none such: nothing, Tab goes through" '1 ^How' "$(tabs) $(line)"
-editor 'Thanks first' 'say Thatcher here' 'done. Thawing now'
+editor 'Thanks first.' '' 'say Thatcher here' 'done. Thawing now: then more.'
 typed 'ok. Tha'
-expect ". : only words that begin a sentence, the . kept" 'ok. Thanks |ok. Thawing |ok. Tha|' "$(cycle 1 2 3)"
-editor 'say Thatcher here' 'really? Thawing now' 'yes! Thanks then'
+expect ". : the sentences that start so, whole (: ends one), the . kept" 'ok. Thanks first. |ok. Thawing now: |ok. Tha|' "$(cycle 1 2 3)"
+editor 'say Thatcher here' 'really? Thawing now.' 'yes! Thanks then.'
 typed 'wow! Tha'
-expect "  ... ! and ? end sentences too" 'wow! Thawing |wow! Thanks |wow! Tha|' "$(cycle 1 2 3)"
-editor 'say Thatcher here' 'done. Thawing now'
+expect "  ... ! and ? end sentences too" 'wow! Thawing now. |wow! Thanks then. |wow! Tha|' "$(cycle 1 2 3)"
+editor 'say Thatcher here' 'done. Thawing now.'
 typed 'why? Tha'; dab expand
-expect "  ... typed after ? as well" 'why? Thawing ' "$(line)"
+expect "  ... typed after ? as well" 'why? Thawing now. ' "$(line)"
+editor 'Some words. The other direction is' '  long here. More'
+typed '.th'; dab tab
+expect "  ... over a line break" 'The other direction is long here. ' "$(line)"
+editor 'The model in four sentences' '' 'more'
+typed '.th'; dab tab
+expect "  ... with no end, to the block's" 'The model in four sentences ' "$(line)"
+editor 'it goes: on and on. done'
+typed '.on'; dab tab
+expect "  ... a sentence starts after :" 'on and on. ' "$(line)"
+editor 'we go: then more. end'
+typed 'we ....'; dab tab
+expect ".... ends at : too" 'we go: ' "$(line)"
 editor 'Thanks first' 'say Thatcher here' 'done. Thawing now'
 typed 'ok. Thatc'; dab expand
 expect "  ... none such: all words" 'ok. Thatcher ' "$(line)"
@@ -268,8 +280,8 @@ editor 'version 2.5 here'
 typed '2.'; dab tab
 expect "  ... no such item: as before" '2.5 ' "$(line)"
 
-LIST=('Thanks first' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
-for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which one ' '. T|. Thanks ' '-W|Which one ' '.t|Thanks '; do
+LIST=('Thanks first.' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
+for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which one ' '. T|. Thanks first. ' '-W|Which one ' '.t|Thanks first. '; do
     editor "${LIST[@]}"
     typed "${t%%|*}"; dab tab
     expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
@@ -277,9 +289,9 @@ done
 editor "${LIST[@]}"
 typed '-Wal'; dab tab
 expect "  ... -W with no such list item: as before, the - kept" '-Wall ' "$(line)"
-editor 'Thanks first' 'say Thatcher here' 'done. Thawing now' 'see .thatrc'
+editor 'Thanks first.' 'say Thatcher here' 'done. Thawing now.' 'see .thatrc'
 typed '.th'
-expect ".word: sentence starts, the . gone" 'Thanks |Thawing |.th|' "$(cycle 1 2 3)"
+expect ".word: the sentences that start so, whole, the . gone" 'Thanks first. |Thawing now. |.th|' "$(cycle 1 2 3)"
 editor 'say Thatcher here' 'see .thatrc'
 typed 'x .thatr'; dab tab
 expect "  ... with none such: as before, the . kept" 'x .thatrc ' "$(line)"
@@ -375,6 +387,22 @@ typed '^T..$$'; dab tab expand
 expect "  ... M-/: the next block that starts so" 'Then later ' "$(line)"
 dab expand
 expect "  ... past the last: what was typed" '^T..$$' "$(line)"
+TWICE=('The model in four' '' 'The other direction: a' '  pattern here.' '' 'x')
+editor "${TWICE[@]}"
+typed '^T..$$'; dab tab
+expect "  ... each place, not each word: the first The" 'The model in four ' "$(line)"
+dab expand
+expect "  ... M-/: the other The, its block of two rows" 'The other direction: a pattern here. ' "$(line)"
+editor "${TWICE[@]}"
+typed '^The other..$$'; dab tab
+expect "  ... a query of words: the first anchored, the rest after it" 'The other direction: a pattern here. ' "$(line)"
+editor "${TWICE[@]}"
+typed '^The oth ..$'; dab tab
+expect "  ... each word of it a prefix" 'The other direction: a ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them in..cons'; dab tab
+expect "..word right after a word, no space" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. ' "$(line)"
 BLOCK2=('The pattern has claims in it' 'x' 'That one claims too' '' 'Then later')
 editor "${BLOCK2[@]}"
 typed '^T ..cl'; dab tab
