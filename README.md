@@ -237,3 +237,7 @@ bash tests/entry.test.sh           # tmux-tools.tmux
 ```
 
 Each runs its own scratch tmux server and touches nothing of yours.
+
+## Licence
+
+MIT — see LICENSE.
