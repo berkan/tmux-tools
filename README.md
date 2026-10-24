@@ -1,0 +1,232 @@
+# tmux-tools
+
+Keyboard tools for tmux, for reaching what is on the screen: complete from it,
+jump to it, copy it, open it. They work in any program that takes typed keys,
+and were made for typing into terminal agents (Claude Code, Codex, pi): quoting
+their answers back, pulling a passage into the prompt, opening a file they
+named.
+
+| tool | what it does |
+|---|---|
+| `dabbrev` | completes the word before the cursor from the screen, like Emacs' `M-/`, and a small language for pulling in more: a line, a list item, a sentence, a passage, a snippet |
+| `link` | in copy mode, acts on the link (OSC 8) or the thing under the cursor: open it, copy, paste or quote its full target |
+| `jump-click` | jump to any place on screen by keyboard; in a prompt the program's own cursor moves there |
+| `expand-region` | in copy mode, grow the selection to the next larger region (word, path, quotes, brackets, line, paragraph), like Emacs' expand-region |
+| `quote-reply` | paste the newest copy as `re: "…" -- `, to quote an answer back to an agent |
+
+## Requirements
+
+- tmux 3.4 or newer (3.5 for `link` to read links without leaving copy mode)
+- python3 (`quote-reply` is plain sh)
+- for `dabbrev`'s `M-/` and `M-?`: a terminal that sends them. In Ghostty, to
+  have Cmd+/ and Cmd+Shift+/ do it:
+
+  ```
+  keybind = cmd+/=text:\x1b/
+  keybind = cmd+shift+/=text:\x1b?
+  ```
+
+## Install
+
+With [tpm](https://github.com/tmux-plugins/tpm), in `~/.tmux.conf`:
+
+```tmux
+set -g @plugin 'berkan/tmux-tools'
+```
+
+then `prefix I`. tpm runs `tmux-tools.tmux`, which binds every tool.
+
+By hand: clone the repository anywhere and add to `~/.tmux.conf`
+
+```tmux
+run-shell ~/path/to/tmux-tools/tmux-tools.tmux
+```
+
+One tool alone: each binds its own keys, so
+
+```tmux
+run-shell '~/path/to/tmux-tools/bin/tmux-dabbrev bind'
+```
+
+Set a tool's options (below) before the line that binds it.
+
+### Choosing tools
+
+```tmux
+set -g @tmux-tools 'dabbrev link jump-click'    # unset: all of them; '' for none
+```
+
+`link` uses `dabbrev`'s idea of what a thing on screen is (an entity, below)
+when `bin/tmux-dabbrev` is beside it, whether `dabbrev` is bound or not;
+without it, `link` acts on links only.
+
+## Keys and options
+
+Each option is a tmux option, set with `set -g`. Defaults in brackets.
+
+### dabbrev
+
+| key | does |
+|---|---|
+| `M-/` | the best completion; again, the next one; past the last, what was typed |
+| `Tab` (in the programs below) | the same first completion; again, the word that follows it on screen, and so on |
+| `M-?` | take back the last press |
+
+| option | |
+|---|---|
+| `@dabbrev-key`, `@dabbrev-undo-key` | the keys [`M-/`, `M-?`] |
+| `@dabbrev-tab-commands` | programs in which Tab completes, by `#{pane_current_command}` [`claude codex pi node agy gemini`]; `''` leaves Tab alone |
+| `@dabbrev-order` | the order of words that rank alike [`middle`: nearest the middle of the screen]; also `frequent`, `cursor`, `top` |
+| `@dabbrev-span-order` | the same for entities [`middle`] |
+| `@dabbrev-entities` | what counts as one thing on screen [`coloured camelcase capitalised`]: runs of text in a style of their own, CamelCase words, runs of Capitalised Words; `''` for none |
+| `@dabbrev-ruby-ranges` | `..` takes the end and `...` stops before it, as Ruby's ranges [on]; `off`: both take it |
+| `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
+| `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
+
+Entities come before words. A completion after an opening quote or bracket
+is closed with its pair (`"hel` → `"hello" `).
+
+### link
+
+In copy mode (copy-mode-vi), with nothing selected — as where `jump-click`
+lands:
+
+| key | does |
+|---|---|
+| `o`, `Enter` | open the link: a file or folder in `$VISUAL` (else `$EDITOR`, else vi) in a popup; another link with the opener |
+| `y`, `p`, `r` | copy, paste, quote (`re: "…" -- `) the link's full target (a file link's path), or else the entity under the cursor |
+
+With a selection they do what tmux does (`r` quotes it).
+
+| option | |
+|---|---|
+| `@link-opener` | the command that opens web links [unset: `open`, else `xdg-open`]; `''`: none, the link is copied instead |
+
+Claude Code shows a short path (`drafts/x.md`) for the file it links
+(`file:///Users/me/notes/drafts/x.md`); `link` takes the full one.
+
+### jump-click
+
+| key | does |
+|---|---|
+| `prefix` then the key, a character, the label | jump there: a place the program's cursor can reach (red) moves that cursor (a click, or arrow keys); any other (blue) goes there in copy mode with a selection begun |
+
+`^` as the character labels the start of each line. While selecting, a
+second jump moves the selection's end.
+
+| option | |
+|---|---|
+| `@jump-click-key` | the key(s) after the prefix [`C-j`]; several separated by spaces |
+
+### expand-region
+
+| key (copy mode) | does |
+|---|---|
+| `=` | grow the selection to the next larger region |
+| `-` | shrink it back |
+
+| option | |
+|---|---|
+| `@expand-region-expand-key`, `@expand-region-shrink-key` | the keys [`=`, `-`] |
+| `@expand-region-rules` | a rules file [`~/.config/tmux-expand-region/rules`]; `tmux-expand-region rules` prints the rules in effect |
+
+### quote-reply
+
+| option | |
+|---|---|
+| `@quote-reply-key` | the key after the prefix that pastes the newest copy as `re: "…" -- ` [none] |
+
+## Personalising
+
+### Snippets (dabbrev)
+
+`,name` + Tab types the snippet; `,n` + `M-/` cycles those starting `n`, `,`
+alone all of them. The file (`@dabbrev-snippets`), one a line:
+
+```
+# NAME  TEXT
+re      re: "|" --\s
+sig     Best,\nAda
+```
+
+`|` is where the cursor goes, `\n` a line break (pasted, so the program does
+not take it as Enter), `\s` a space (for a trailing one), `\|` and `\\` a bar
+and a backslash. Names are letters, digits and `_`. The file is read at each
+`,name` completion, so edits apply at once.
+
+### Sugar (dabbrev)
+
+A mark of your own that stands for an operator, `%` its argument. Built in:
+`_` is `^%..$` (the row that starts so). The file (`@dabbrev-sugars`):
+
+```
+# MARK  WHAT IT STANDS FOR
+§       ^%..$$
+```
+
+A mark is one character that is not a letter, digit or one of `^ - . = , \ #`.
+
+### Regions (expand-region)
+
+The rules file (`@expand-region-rules`) adds to or replaces the built-in
+rules, one a line:
+
+```
+# NAME  regex  PATTERN      each match a region (and each named group in it)
+ticket  regex  [A-Z]+-\d+
+-email                      drop the rule called email
+```
+
+## dabbrev's language
+
+What is typed before the cursor is read for operators; with none, the last
+word is completed from the screen. An operator's mark counts after anything
+but a letter or digit (a space, a quote, a bracket, `/`), and its argument
+touches it.
+
+| typed | Tab gives |
+|---|---|
+| `wor` | a word on screen starting so; Tab again, the words after it |
+| `^The oth` | the words at a line's start (`^#`, `^*` for headings and org items) |
+| `_The oth` | the whole row that starts so |
+| `-Which` | the whole list item that starts so |
+| `.The` | the whole sentence that starts so (to `.` `!` `?` or `:`) |
+| `=Does` | an entity that starts so (`=` gives the longer first) |
+| `2.` | the list item numbered 2 |
+| `keep them ..cons` | from where `keep them` is on screen up to and with `consumes` |
+| `^T..$$` | from a line starting `T` to the end of its block (a blank line) |
+| `-F....` | from a list item starting `F` to the end of its sentence, without the full stop |
+| `,re` | the snippet `re` |
+
+Ends after `..` (with the end) or `...` (up to it): a word, `$` (the line's
+end), `$$` (the block's), `.` (the sentence's), `?`, `!`, `^Wh` (the next line
+starting `Wh`), `-Wh` or `-` (the next list item).
+
+Several in one press make a chain, joined by what you type between them
+(spaces and `, ; :`): `1., 2.` gives both items with `, ` between; `,re=Does`
+puts the entity in the snippet's quotes. `\text` is text as it is, up to the
+next operator. All but the last take a one-word argument; a word of plain text
+between them ends the chain.
+
+An operator with nothing on screen to match is text: its word completes as
+any (`^Howitzer`). `M-/` cycles the last operator's matches; `M-?` takes the
+press back.
+
+To see how something is read and what each part would take:
+
+```
+tmux-dabbrev explain '1., -Wh' [PANE]
+```
+
+## Tests
+
+```
+bash tests/dabbrev-logic.test.sh   # the language, no tmux: a second
+bash tests/dabbrev.test.sh         # typing into a real pane: minutes
+bash tests/link.test.sh
+bash tests/jump-click.test.sh
+bash tests/expand-region.test.sh
+bash tests/entry.test.sh           # tmux-tools.tmux
+```
+
+Each runs its own scratch tmux server and touches nothing of yours.

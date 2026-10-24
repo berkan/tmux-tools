@@ -11,7 +11,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-LINK="$HERE/../config/tmux-link"
+LINK="$HERE/../bin/tmux-link"
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/tmux-link-test.XXXXXX")" && pwd)"
 export TMUX_TMPDIR="$SCRATCH"
 unset TMUX

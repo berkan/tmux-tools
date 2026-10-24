@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/dabbrev-logic.XXXXXX")" && pwd)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-python3 - "$HERE/../config/tmux-dabbrev" "$SCRATCH" <<'EOF'
+python3 - "$HERE/../bin/tmux-dabbrev" "$SCRATCH" <<'EOF'
 import importlib.machinery, importlib.util, os, sys
 sys.dont_write_bytecode = True
 loader = importlib.machinery.SourceFileLoader('dabbrev', sys.argv[1])

@@ -10,7 +10,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-DAB="$HERE/../config/tmux-dabbrev"
+DAB="$HERE/../bin/tmux-dabbrev"
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/tmux-dabbrev-test.XXXXXX")" && pwd)"
 export TMUX_TMPDIR="$SCRATCH"         # the server's socket goes with the scratch dir
 export TMPDIR="$SCRATCH/tmp"          # and the script's state files

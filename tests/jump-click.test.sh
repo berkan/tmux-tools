@@ -9,7 +9,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-CLICK="$HERE/../config/tmux-jump-click"
+CLICK="$HERE/../bin/tmux-jump-click"
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/tmux-jump-click-test.XXXXXX")" && pwd)"
 OUTER="tmux-jump-click-outer-$$"
 INNER="tmux-jump-click-inner-$$"

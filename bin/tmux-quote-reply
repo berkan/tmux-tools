@@ -6,8 +6,16 @@
 #
 # Highlight text first: Claude Code's own mouse selection and tmux copy mode
 # both copy into a tmux buffer. Bracketed paste (-p) keeps a multi-line quote
-# in the prompt unsubmitted. Bind it to a key, e.g.
+# in the prompt unsubmitted.
+#
+# tmux-quote-reply bind — bind the key in the @quote-reply-key option after the
+# prefix (none by default); or bind it yourself:
 #   bind r run-shell "/path/to/tmux-quote-reply '#{pane_id}'"
+if [ "${1:-}" = bind ]; then              # bind the key in @quote-reply-key, after the prefix
+    key=$(tmux show-options -gqv @quote-reply-key)
+    [ -n "$key" ] && tmux bind-key "$key" run-shell "$(cd "$(dirname "$0")" && pwd)/tmux-quote-reply '#{pane_id}'"
+    exit 0
+fi
 pane=${1:-$(tmux display -p '#{pane_id}')}
 sel=$(tmux show-buffer) || exit 0
 tmux copy-mode -q -t "$pane"              # leave copy/view mode if in it

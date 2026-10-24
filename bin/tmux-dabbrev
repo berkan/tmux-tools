@@ -101,7 +101,7 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 RUBY_OPTION = '@dabbrev-ruby-ranges'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
-SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
+SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),(\w*)$')          # names: letters, digits, _
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")

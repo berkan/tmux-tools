@@ -8,7 +8,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-EXPAND="$HERE/../config/tmux-expand-region"
+EXPAND="$HERE/../bin/tmux-expand-region"
 SCRATCH="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/tmux-expand-region-test.XXXXXX")" && pwd)"
 SERVER="tmux-expand-region-$$"
 cleanup() {
