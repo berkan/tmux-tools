@@ -35,25 +35,29 @@
 # at once.
 #
 #   ^WORD, ^ WORD (on the screen's words) only words that begin a line; the
-#                 ^ goes. After "- " (or * • + 1. 1)), the list items that
-#                 start so, each whole (the rows it wraps onto too); after
-#                 ". " (! ? :), the sentences that start so, each whole (to
-#                 . ! ? or :, or a blank row or list item); those stay,
-#                 and with no such match, all words. -WORD and .WORD the
-#                 same, the mark gone (else as before, the mark kept); 2.
-#                 (or 2)) the items numbered so, whole.
+#                 ^ goes. -WORD the list items that start so, each whole
+#                 (the rows it wraps onto too); .WORD the sentences that
+#                 start so, each whole (to . ! ? or :, or a blank row or a
+#                 list item); the mark goes, and with no such match, as
+#                 before, the mark kept. 2. (or 2)) the items numbered so,
+#                 whole. A mark is an anchor only when it touches the word:
+#                 in "- W" and ". W" (! ? :) it is text, and W completes as
+#                 any word.
 #                 _WORD the rows that start so, whole (^WORD..$), else as
 #                 before (_private).
 #                 =WORD only entities, those of more words first; the =
 #                 goes, and with none such, nothing. After an anchor one
-#                 letter is enough for Tab.
+#                 letter is enough for Tab (-W, ^H).
 #   ...WORD       (on the screen's words) everything from where the text
 #                 before ... leaves off on screen up to a word starting with
 #                 WORD, with what is on it (consumes.), line breaks as
 #                 spaces; ...$ to the end of the line, ...$$ to the end of
 #                 the block (up to a blank row, lists too), .... (or
 #                 ...) to the end of the sentence, ...? ...! to the next
-#                 such mark; .. does as ..., and a space may follow either.
+#                 such mark. As Ruby's ranges (@dabbrev-ruby-ranges, on unless
+#                 off) .. takes the end and ... stops before it: ...Then up
+#                 to Then, .... a sentence without its full stop (... alone
+#                 is .. and .: with it); off, ... is ... A space may follow.
 #                 After an anchored query (^T..$$, -W ..cl): each match of
 #                 the query, taken on to its first such end; M-/ the next
 #                 match. Otherwise: from where the last Tab took its words, else from
@@ -115,12 +119,13 @@ OPEN = r"""(?:^|(?<=[\s"'`(\[{<]))"""         # an anchor starts a word, or foll
 LINE_TYPED = re.compile(OPEN + r"\^ ?\w[\w'./-]*$")               # ^word, ^ word
 NUMBER_TYPED = re.compile(OPEN + r'\d+[.)]$')                       # 2. 2)
 LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins a list item
-LIST_LEAD = re.compile(OPEN + r'(?:[-*•+]|\d+[.)])\s$')           # - word
-SENTENCE_LEAD = re.compile(r'[.!?:]["\'’”)\]]*\s$')              # . word
 # ..word or ...word (a space between or none): up to the word; $ the line's
 # end, $$ the block's; . the sentence's (so "..." and "...." too), ? or ! the
 # next such mark.
-UPTO = r"\.\.\.? ?(\w[\w'./-]*|\$\$?|[.!?])"
+UPTO = r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?])"
+# As Ruby's ranges (@dabbrev-ruby-ranges, on unless off): .. takes the end,
+# ... stops before it (...Then, .... a sentence without its full stop).
+RUBY_OPTION = '@dabbrev-ruby-ranges'
 UPTO_TYPED = re.compile(r"""(?:^|(?<=[\s\w"'`(\[{<]))""" + UPTO + "$")   # also right after a word
 # An anchored query before it (^T..$$, ^The other..$$, -W ..cl): each match of
 # the query on screen (its first word anchored, the rest following it, each a
@@ -492,8 +497,11 @@ def continuations(pane, following):
     return out
 
 
-def ends(following, target):
-    """Where in FOLLOWING the text up to TARGET (as in up_to) ends, in order."""
+def ends(following, target, exclusive=False):
+    """Where in FOLLOWING the text up to TARGET (as in up_to) ends, in order;
+    EXCLUSIVE: before the word or the mark, not after it, and before the
+    spaces before it, so what follows starts with them."""
+    before = lambda i: len(following[:i].rstrip())
     if target == '$':
         m = re.search(r'\S[^\n]*', following)
         return [m.end()] if m else []
@@ -502,8 +510,9 @@ def ends(following, target):
         return [m.start() if m else len(following.rstrip())]
     if target in '.?!':                         # . a sentence's end; ? ! that mark
         marks = '.!?:' if target == '.' else target
-        return [m.end() for m in re.finditer(r'[' + re.escape(marks) + r']["\'’”)\]]*(?=\s|$)', following)]
-    return [m.start() + len(re.match(r'\S*', following[m.start():]).group())
+        return [before(m.start()) if exclusive else m.end()
+                for m in re.finditer(r'[' + re.escape(marks) + r']["\'’”)\]]*(?=\s|$)', following)]
+    return [before(m.start()) if exclusive else m.start() + len(re.match(r'\S*', following[m.start():]).group())
             for m in WORD.finditer(following) if smartcase(target, m.group())]
 
 
@@ -512,7 +521,7 @@ def taken(following, end):
     return re.sub(r'\s*\n\s*', ' ', following[:end]).rstrip()
 
 
-def up_to(pane, start, word):
+def up_to(pane, start, word, exclusive=False):
     """...WORD: the text on screen from where the text left of START leaves
     off up to a word that starts with WORD (smart case) and what is on it
     (consumes.), its line breaks one space; one alternative for each such
@@ -542,7 +551,7 @@ def up_to(pane, start, word):
     for following in sources:
         if tail and following.lstrip(' ').startswith(tail):
             following = following.lstrip(' ')[len(tail):]
-        for end in ends(following, word):
+        for end in ends(following, word, exclusive):
             text = taken(following, end)
             text = (text.lstrip() if anchor[-1:].isspace() else text) + ' '
             if text not in seen:
@@ -668,21 +677,22 @@ class Screen:
             mark = re.search(OPEN + r'[-.=]$', lead)
             if mark:                                # -word, .word (MARKS), =word
                 return m.start() - 1, mark.group() + m.group()
-            anchored = LIST_LEAD.search(lead) or SENTENCE_LEAD.search(lead)
-            # After an anchor the matches are few: one letter is enough.
-            return (m.start(), m.group()) if anchored or len(m.group()) >= least else None
+            return (m.start(), m.group()) if len(m.group()) >= least else None
         if len(re.search(r'\S*$', pane.before).group()) >= least:
             return len(pane.before), ''         # punctuation only: for the spans that start with it
         return None
 
     def complete(self, pane, start, typed):
         if typed.startswith('..'):
-            return up_to(pane, start, re.fullmatch(UPTO, typed).group(1))
+            dots, target = re.fullmatch(UPTO, typed).groups()
+            return up_to(pane, start, target, exclusive=dots == '...' and pane.ruby_ranges())
         if typed[:1] == '_' and len(typed) > 1:   # _xyz: ^xyz..$, else as before
             return self.query_up_to(pane, start, '^' + typed[1:], '$') or self.words(pane, start, typed)
         m = QUERY_UPTO.fullmatch(typed)
         if m:                                       # ^T..$$: each match of ^T, taken on
-            return self.query_up_to(pane, start, m.group('query'), re.fullmatch(UPTO, m.group('op')).group(1))
+            dots, target = re.fullmatch(UPTO, m.group('op')).groups()
+            return self.query_up_to(pane, start, m.group('query'), target,
+                                    exclusive=dots == '...' and pane.ruby_ranges())
         if typed.startswith('^'):                   # line starts only; the ^ goes
             word = typed.lstrip('^ ')
             return self.words(pane, start + len(typed) - len(word), word, line_start)
@@ -696,14 +706,9 @@ class Screen:
             word = typed[1:]
             return MARKS[typed[0]](pane, start + 1, word) or [
                 {**alt, 'text': typed[0] + alt['text']} for alt in self.words(pane, start + 1, word)]
-        lead = pane.before[:start]                  # - and . stay: they are text too
-        if LIST_LEAD.search(lead):
-            return list_items(pane, start, typed) or self.words(pane, start, typed)
-        if SENTENCE_LEAD.search(lead):
-            return sentences(pane, start, typed) or self.words(pane, start, typed)
-        return self.words(pane, start, typed)
+        return self.words(pane, start, typed)      # "- W", ". W": text, not anchors
 
-    def query_up_to(self, pane, start, query, target):
+    def query_up_to(self, pane, start, query, target, exclusive=False):
         """The matches of QUERY (typed from START) at every place on screen:
         its first word where its anchor says (a line's start, a list item's,
         a sentence's, an entity), the rest the words that follow there, each
@@ -732,7 +737,7 @@ class Screen:
                     break
                 text += taken(following, m.end())
                 following = following[m.end():]
-            found = ends(following, target) if following is not None else []
+            found = ends(following, target, exclusive) if following is not None else []
             if found:
                 text = text + taken(following, found[0]) + ' '
                 if text not in seen:
@@ -851,6 +856,10 @@ class Pane:
         if self._cwd is None:
             self._cwd = tmux('display-message', '-p', '-t', self.pane, '#{pane_current_path}').strip()
         return self._cwd
+
+    def ruby_ranges(self):
+        """Whether ... leaves the end out (@dabbrev-ruby-ranges, on unless off)."""
+        return tmux('show-options', '-gqv', RUBY_OPTION).strip() != 'off'
 
     def order(self, span):
         """The name of the order for coloured spans (SPAN) or the rest, or the

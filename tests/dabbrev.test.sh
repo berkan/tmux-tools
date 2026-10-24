@@ -237,16 +237,13 @@ typed '^How'; dab tab
 expect "  ... none such: nothing, Tab goes through" '1 ^How' "$(tabs) $(line)"
 editor 'Thanks first.' '' 'say Thatcher here' 'done. Thawing now: then more.'
 typed 'ok. Tha'
-expect ". : the sentences that start so, whole (: ends one), the . kept" 'ok. Thanks first. |ok. Thawing now: |ok. Tha|' "$(cycle 1 2 3)"
-editor 'say Thatcher here' 'really? Thawing now.' 'yes! Thanks then.'
-typed 'wow! Tha'
-expect "  ... ! and ? end sentences too" 'wow! Thawing now. |wow! Thanks then. |wow! Tha|' "$(cycle 1 2 3)"
-editor 'say Thatcher here' 'done. Thawing now.'
-typed 'why? Tha'; dab expand
-expect "  ... typed after ? as well" 'why? Thawing now. ' "$(line)"
+expect "\". \" is text, not an anchor: all words" 'ok. Thanks |ok. Thatcher |ok. Thawing |' "$(cycle 1 2 3)"
+editor 'say Thatcher here' 'yes! Thanks then.'
+typed 'wow! Tha'; dab expand
+expect "  ... \"! \" too" 'wow! Thatcher ' "$(line)"
 editor 'Some words. The other direction is' '  long here. More'
 typed '.th'; dab tab
-expect "  ... over a line break" 'The other direction is long here. ' "$(line)"
+expect ".word: the sentence that starts so, over a line break" 'The other direction is long here. ' "$(line)"
 editor 'The model in four sentences' '' 'more'
 typed '.th'; dab tab
 expect "  ... with no end, to the block's" 'The model in four sentences ' "$(line)"
@@ -257,22 +254,19 @@ editor 'it goes: on and on. done'
 typed '.on'; dab tab
 expect "  ... a sentence starts after :" 'on and on. ' "$(line)"
 editor 'we go: then more. end'
-typed 'we ....'; dab tab
-expect ".... ends at : too" 'we go: ' "$(line)"
-editor 'Thanks first' 'say Thatcher here' 'done. Thawing now'
-typed 'ok. Thatc'; dab expand
-expect "  ... none such: all words" 'ok. Thatcher ' "$(line)"
+typed 'we ...'; dab tab
+expect "... (.. and .) ends at : too" 'we go: ' "$(line)"
 editor 'say Whale here' '- Which one' '  * Whatever' '  2. Whence'
 typed '- Wh'
-expect "- : list items that start so, whole, the - kept" '- Which one |- Whatever |- Whence |- Wh|' "$(cycle 1 2 3 4)"
-editor 'say Whale here' '- Which one'
-typed '- Whal'; dab expand
-expect "  ... none such: all words" '- Whale ' "$(line)"
+expect "\"- \" is text too (a list of your own): all words" '- Whale |- Which |- Whatever |- Whence |' "$(cycle 1 2 3 4)"
+editor 'say Whale here' '- Which one' '  * Whatever' '  2. Whence'
+typed '-Wh'
+expect "-word: list items that start so, whole, the - gone" 'Which one |Whatever |Whence |-Wh|' "$(cycle 1 2 3 4)"
 editor 'say Whale here' '- Which one is' '  wrapped on' '  and on' '- Next item' 'after'
-typed '- Wh'; dab tab
-expect "  ... with the lines it wraps onto" '- Which one is wrapped on and on ' "$(line)"
+typed '-Wh'; dab tab
+expect "  ... with the lines it wraps onto" 'Which one is wrapped on and on ' "$(line)"
 dab tab
-expect "  ... then Tab goes on after it" '- Which one is wrapped on and on Next ' "$(line)"
+expect "  ... then Tab goes on after it" 'Which one is wrapped on and on Next ' "$(line)"
 editor '- Which one' '' 'not of it'
 typed '-W'; dab tab
 expect "  ... a blank line ends it" 'Which one ' "$(line)"
@@ -284,10 +278,15 @@ typed '2.'; dab tab
 expect "  ... no such item: as before" '2.5 ' "$(line)"
 
 LIST=('Thanks first.' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
-for t in '^H|Howdy ' '^ H|Howdy ' '- W|- Which one ' '. T|. Thanks first. ' '-W|Which one ' '.t|Thanks first. '; do
+for t in '^H|Howdy ' '^ H|Howdy ' '-W|Which one ' '.t|Thanks first. '; do
     editor "${LIST[@]}"
     typed "${t%%|*}"; dab tab
     expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
+done
+for t in '- W' '. T'; do
+    editor "${LIST[@]}"
+    typed "$t"; dab tab
+    expect "  ... not after text: one letter, Tab goes through: $t" "1 $t" "$(tabs) $(line)"
 done
 editor "${LIST[@]}"
 typed '-Wal'; dab tab
@@ -325,7 +324,8 @@ editor "${ENT[@]}"
 typed '=zz'; dab tab
 expect "  ... none such: nothing, Tab goes through" '1 =zz' "$(tabs) $(line)"
 
-echo "...word: up to the word"
+echo "...word: up to the word (inclusive: @dabbrev-ruby-ranges off)"
+tmux set -g @dabbrev-ruby-ranges off
 PARA=('we keep them in ppi for now, while' '  you are changing them. Move them out once' '  they settle, so ppi consumes. Then more')
 editor "${PARA[@]}"
 typed 'keep'; dab tab tab
@@ -436,6 +436,37 @@ expect "  ... M-/: the next that starts so, not the next end" 'That one claims '
 editor "${PARA[@]}"
 typed '...cons'; dab tab
 expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
+
+tmux set -gu @dabbrev-ruby-ranges
+
+echo "Ruby's ranges (@dabbrev-ruby-ranges, on by default): ... leaves the end out, .. takes it"
+editor "${PARA[@]}"
+typed 'keep them in ...consumes'; dab tab
+expect "...word: up to the word, not it" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi ' "$(line)"
+dab tab
+expect "  ... Tab goes on with it" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them in ..consumes'; dab tab
+expect "..word: up to and with it" \
+    'keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes. ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them ....'
+expect "....: the sentence without its end" \
+    'keep them in ppi for now, while you are changing them |keep them in ppi for now, while you are changing them. Move them out once they settle, so ppi consumes |' "$(cycle 1 2)"
+editor "${PARA[@]}"
+typed 'keep them ...'; dab tab
+expect "...: (.. and .) the sentence with it" 'keep them in ppi for now, while you are changing them. ' "$(line)"
+editor 'we ask is it so? yes! see' 'x'
+typed 'ask ...?'; dab tab
+expect "...?: up to the ?, not it" 'ask is it so ' "$(line)"
+editor "${PARA[@]}"
+typed 'keep them ...$'; dab tab
+expect "...\$: as ..\$ (nothing to leave out)" 'keep them in ppi for now, while ' "$(line)"
+editor '- First sentence here. And then' '  more of the item.' '- Second one' 'x'
+typed '-F....'; dab tab
+expect "  ... after a query too" 'First sentence here ' "$(line)"
 
 echo "_word: the row that starts so (^word..\$)"
 LINES=('xyz is the line here' 'see xyzzy too' '  xyz again' 'a _private_name here')
