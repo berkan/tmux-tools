@@ -309,7 +309,7 @@ editor $'  \e[1mDoes \e[38;5;105mWhen\e[39m set up a listener?\e[0m Not quite. A
 typed '=Wh'; dab tab
 expect "  ... the runs in it too" 'When ' "$(line)"
 QUOTED=('Thanks first.' 'Howdy partner' '- Which one' '' $'  \e[1mThe model\e[0m here' '' 'x')
-for t in 're: "=T|re: "The model ' 're: "^H|re: "Howdy ' 're: "-W|re: "Which one ' "('.th|('The model here " 're: "^T..$$|re: "The model here '; do
+for t in 're: "=T|re: "The model" ' 're: "^H|re: "Howdy" ' 're: "-W|re: "Which one" ' "('.th|('The model here' " 're: "^T..$$|re: "The model here" '; do
     editor "${QUOTED[@]}"
     typed "${t%%|*}"; dab tab
     expect "after a quote or a bracket too: ${t%%|*}" "${t#*|}" "$(line)"
@@ -437,6 +437,34 @@ editor "${PARA[@]}"
 typed '...cons'; dab tab
 expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
 
+echo "after an opening quote or bracket, the completion is closed"
+editor 'say hello world here'
+typed 'x "hel'; dab tab
+expect "the closer after it" 'x "hello" ' "$(line)"
+dab tab
+expect "  ... and on after the words Tab adds" 'x "hello world" ' "$(line)"
+dab undo
+expect "  ... undo with it" 'x "hello" ' "$(line)"
+dab undo
+expect "  ... back to what was typed" 'x "hel' "$(line)"
+editor 'say hello world here'
+typed '"hello'; dab tab
+expect "  ... a whole word: on to the next, closed" '"hello world" ' "$(line)"
+for t in '(hel|(hello) ' '[hel|[hello] ' "'hel|'hello' " '`hel|`hello` ' '“hel|“hello” '; do
+    editor 'say hello world here'
+    typed "${t%%|*}"; dab tab
+    expect "  ... ${t%%|*}" "${t#*|}" "$(line)"
+done
+editor $'and \e[1mClaude Code\e[0m too'
+typed '"=Cl'; dab tab
+expect "  ... after an anchor too" '"Claude Code" ' "$(line)"
+editor 'say hello world here'
+typed 'f(hel'; dab tab
+expect "  ... not after one that does not begin a word" 'f(hello ' "$(line)"
+editor 'say "hello world" here'
+typed '"hel'; dab tab tab tab
+expect "  ... not once what it takes holds the closer" '"hello world" here ' "$(line)"
+
 echo "M-/ after Tab: the other words that follow"
 editor 'alpha gamma two' 'alpha beta one'
 typed 'al'; dab tab tab
@@ -514,7 +542,7 @@ expect "  ... and undo gives back the //" "//${F#/}/Be" "$(line)"
 CWD="$F/alps"
 editor
 typed '(../Be'; dab tab
-expect "../, after a bracket" '(../Beta.md ' "$(line)"
+expect "../, after a bracket (and closed)" '(../Beta.md) ' "$(line)"
 editor
 typed './zz'; dab tab
 expect "no such file: Tab goes through" '1 ./zz' "$(tabs) $(line)"

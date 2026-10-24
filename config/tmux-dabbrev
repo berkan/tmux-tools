@@ -58,6 +58,10 @@
 #                 where the words before ... are. M-/ goes on to the next
 #                 such word; Tab after it, word by word.
 #
+# After an opening quote or bracket that begins a word ("hel, (hel), the
+# completion is closed with its pair ("hello" ), the closer moving on as Tab
+# adds words; not once the text holds the closer, nor for a snippet.
+#
 #   expand (M-/)  the best word on screen that starts with what was typed:
 #                 the entities before any word (and only they for
 #                 punctuation alone, such as ["); within each, one after the
@@ -543,16 +547,37 @@ def up_to(pane, start, word):
     return out
 
 
+# An opening quote or bracket right before what was typed (at a word's start):
+# the completion is closed with its pair, the closer moving on with it.
+CLOSERS = {'"': '"', "'": "'", '`': '`', '(': ')', '[': ']', '{': '}', '<': '>', '“': '”', '‘': '’'}
+
+
+def closer(before, start):
+    """The closer for the opener just before START in BEFORE, or ''."""
+    opener = before[start - 1:start] if start else ''
+    if opener in CLOSERS and (start == 1 or before[start - 2].isspace() or before[start - 2] in CLOSERS):
+        return CLOSERS[opener]
+    return ''
+
+
 def shown(state):
     """(text, back): the text the completion puts in place of what was typed,
     the cursor BACK characters before its end: the chosen alternative of the
     last level, or with none chosen, the level's own (what was typed, or what
-    the level goes on from)."""
+    the level goes on from); closed (CLOSERS) when the state says so, unless
+    it holds the closer already."""
     level = state['levels'][-1]
     if level['index'] < len(level['alts']):
         alt = level['alts'][level['index']]
-        return alt['text'], alt.get('back', 0)
-    return level['none'], 0
+        text, back = alt['text'], alt.get('back', 0)
+    elif len(state['levels']) > 1:
+        text, back = level['none'], 0
+    else:
+        return level['none'], 0                 # what was typed, as it was
+    close = state.get('close', '')
+    if close and not back and text.endswith(' ') and close not in text:
+        text = text[:-1] + close + ' '
+    return text, back
 
 
 # A backend: typed(pane, key) is (start, typed) for the word before the cursor
@@ -922,6 +947,7 @@ def start(pane, key):
     if not alts:
         return False
     state = {'backend': backend.name, 'start': found[0],
+             'close': closer(pane.before, found[0]) if backend.name != 'snippets' else '',
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
     step(pane, state, lambda levels: levels[-1].update(index=0))
     return True
