@@ -34,35 +34,14 @@
 # A completion from the screen ends in a space, so the next press can follow
 # at once.
 #
-#   ^WORD, ^ WORD (on the screen's words) only words that begin a line; the
-#                 ^ goes. -WORD the list items that start so, each whole
-#                 (the rows it wraps onto too); .WORD the sentences that
-#                 start so, each whole (to . ! ? or :, or a blank row or a
-#                 list item); the mark goes, and with no such match, as
-#                 before, the mark kept. 2. (or 2)) the items numbered so,
-#                 whole. A mark is an anchor only when it touches the word:
-#                 in "- W" and ". W" (! ? :) it is text, and W completes as
-#                 any word.
-#                 _WORD the rows that start so, whole (^WORD..$), else as
-#                 before (_private).
-#                 =WORD only entities, those of more words first; the =
-#                 goes, and with none such, nothing. After an anchor one
-#                 letter is enough for Tab (-W, ^H).
-#   ...WORD       (on the screen's words) everything from where the text
-#                 before ... leaves off on screen up to a word starting with
-#                 WORD, with what is on it (consumes.), line breaks as
-#                 spaces; ...$ to the end of the line, ...$$ to the end of
-#                 the block (up to a blank row, lists too), .... (or
-#                 ...) to the end of the sentence, ...? ...! to the next
-#                 such mark. As Ruby's ranges (@dabbrev-ruby-ranges, on unless
-#                 off) .. takes the end and ... stops before it: ...Then up
-#                 to Then, .... a sentence without its full stop (... alone
-#                 is .. and .: with it); off, ... is ... A space may follow.
-#                 After an anchored query (^T..$$, -W ..cl): each match of
-#                 the query, taken on to its first such end; M-/ the next
-#                 match. Otherwise: from where the last Tab took its words, else from
-#                 where the words before ... are. M-/ goes on to the next
-#                 such word; Tab after it, word by word.
+#   operators     (on the screen's words) ^ _ - . = N. and .. ends, as in
+#                 "What is typed" below: ^The oth a line's start, _# Ti the
+#                 row that starts so, -Wh the list item, .The the sentence,
+#                 =Does the entity, 2. the item numbered 2, ^T..$$ from a
+#                 line starting T to the block's end, keep them in ..cons
+#                 from where "keep them in" is on screen to consumes. M-/
+#                 goes on to the next match; Tab after one, word by word.
+#                 With none, an operator is text (^Howitzer).
 #
 # After an opening quote or bracket that begins a word ("hel, (hel), the
 # completion is closed with its pair ("hello" ), the closer moving on as Tab
@@ -115,23 +94,10 @@ import unicodedata
 
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
-OPEN = r"""(?:^|(?<=[\s"'`(\[{<]))"""         # an anchor starts a word, or follows a quote or bracket
-LINE_TYPED = re.compile(OPEN + r"\^ ?\w[\w'./-]*$")               # ^word, ^ word
-NUMBER_TYPED = re.compile(OPEN + r'\d+[.)]$')                       # 2. 2)
 LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins a list item
-# ..word or ...word (a space between or none): up to the word; $ the line's
-# end, $$ the block's; . the sentence's (so "..." and "...." too), ? or ! the
-# next such mark.
-UPTO = r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?])"
 # As Ruby's ranges (@dabbrev-ruby-ranges, on unless off): .. takes the end,
 # ... stops before it (...Then, .... a sentence without its full stop).
 RUBY_OPTION = '@dabbrev-ruby-ranges'
-UPTO_TYPED = re.compile(r"""(?:^|(?<=[\s\w"'`(\[{<]))""" + UPTO + "$")   # also right after a word
-# An anchored query before it (^T..$$, ^The other..$$, -W ..cl): each match of
-# the query on screen (its first word anchored, the rest following it, each a
-# prefix), taken on to its first such end.
-QUERY = r"(?:\^ ?|[-.=])\w[\w'/-]*"
-QUERY_UPTO = re.compile(OPEN + r"(?P<query>" + QUERY + r"(?: [\w'/-]+)*) ?(?P<op>" + UPTO + ")$")
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
@@ -321,18 +287,6 @@ def paths(line):
     return out
 
 
-def line_start(pane, row, a):
-    """Whether character A of ROW begins its line: nothing but spaces and
-    marks (⏺, │) before it."""
-    return not re.search(r'\w', pane.screen[row][:a])
-
-
-def list_item(pane, row, a):
-    """Whether character A of ROW is the first of a list item: after a
-    marker (- * • + 1. 1)) that begins the line."""
-    return bool(re.fullmatch(r'\W*?(?:[-*•+]|\d+[.)])\s+', pane.screen[row][:a]))
-
-
 def sentence_start(pane, row, a):
     """Whether character A of ROW begins a sentence: after . ! ? or :, or
     beginning a line after one that ends a sentence or is blank."""
@@ -359,59 +313,14 @@ def item_at(pane, row, a):
     return ' '.join(parts), after(pane.screen, pane.cy, last, len(pane.screen[last]), 0)
 
 
-def list_items(pane, start, typed, number=None):
-    """Alternatives for the list items on screen whose first word starts with
-    TYPED (smart case), or with NUMBER (digits) those numbered so: each whole
-    (item_at), best first (ranked)."""
-    if number is None:
-        where = list_item
-        accept = lambda text, kind: kind == 'word' and smartcase(typed, text) and text
-    else:
-        numbered = re.compile(r'\W*?' + re.escape(number) + r'[.)]\s+')
-        where = lambda pane, row, a: bool(numbered.fullmatch(pane.screen[row][:a]))
-        accept = lambda text, kind: kind == 'word' and text
-    before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
-    out, seen = [], set()
-    for text, row, end in ranked(pane, start, accept, before, where=where):
-        item, following = item_at(pane, row, end - len(text))
-        if item not in seen:
-            seen.add(item)
-            out.append({'text': item + ' ', 'following': following})
-    return out
-
-
-def sentences(pane, start, word):
-    """Alternatives for the sentences on screen that start with WORD (smart
-    case), each whole: up to its end (. ! ? : and a space), or when that
-    comes first a blank row or a list item; line breaks as spaces."""
-    out, seen = [], set()
-    for text, following in candidates(pane, start, word, sentence_start, every=True):
-        m = PART_END.search(following)
-        found, block = ends(following, '.'), m.start() if m else len(following.rstrip())
-        end = found[0] if found and found[0] <= block else block
-        whole = text + taken(following, end)
-        if whole not in seen:
-            seen.add(whole)
-            out.append({'text': whole + ' ', 'following': following[end:]})
-    return out
-
-
-# A mark just before a word (-Wh, .th): the list items or the sentences that
-# start so, whole, and the mark goes; with none such, all words, the mark kept
-# (-Wall, .bashrc).
-MARKS = {'-': lambda pane, start, word: list_items(pane, start, word),
-         '.': lambda pane, start, word: sentences(pane, start, word)}
-
-
-def ranked(pane, start, accept, before, cursor_row=True, where=None):
+def ranked(pane, start, accept, before, cursor_row=True):
     """[(text, row, end)] for the things on the pane's screen (words, coloured
     spans, paths) that ACCEPT(text, kind) turns into a TEXT: the coloured
     spans before the rest, and in each, first those whose words before them
     on screen (across rows) match the most of the words BEFORE, then in the
     pane's order for them (ORDERS; START: where what was typed starts on the
     cursor's row; a text counts as often as it is taken here). Not what is at
-    START, nor anything on the cursor's row unless CURSOR_ROW, nor with WHERE
-    anything at a place (pane, row, character) it does not take."""
+    START, nor anything on the cursor's row unless CURSOR_ROW."""
     found, seen = [], []
     for row, line in enumerate(pane.screen):
         words = list(WORD.finditer(line))
@@ -421,8 +330,6 @@ def ranked(pane, start, accept, before, cursor_row=True, where=None):
                 seen.append(words[k].group())
                 k += 1
             if row == pane.cy and (not cursor_row or a <= start < b or a == start):
-                continue
-            if where and not where(pane, row, a):
                 continue
             text = accept(line[a:b], kind)
             if text:
@@ -438,13 +345,12 @@ def ranked(pane, start, accept, before, cursor_row=True, where=None):
     return [(text, row, b) for *_, row, _, text, b in sorted(found, key=key)]
 
 
-def candidates(pane, start, typed, where=None, spans_only=False, every=False):
+def candidates(pane, start, typed):
     """[(text, following)] for each word or coloured span on the pane's screen
     that completes TYPED (from character START of the cursor's row), each
     once, best first (ranked); FOLLOWING is the text after it (after). A span
     may also complete the word with what is before it (#12 of #1234), or what
-    is before it alone (TYPED empty: [" of ["a1f3"]). WHERE as in ranked;
-    SPANS_ONLY: entities only; EVERY: each place, not each text once."""
+    is before it alone (TYPED empty: [" of ["a1f3"])."""
     before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
     token = re.search(r'\S*$', pane.before).group()
     lead = token[:len(token) - len(typed)]
@@ -452,12 +358,12 @@ def candidates(pane, start, typed, where=None, spans_only=False, every=False):
     def accept(text, kind):
         if kind == 'span' and lead and smartcase(token, text):
             text = text[len(lead):]
-        elif kind == 'path' or (spans_only and kind != 'span') or not typed or not smartcase(typed, text):
+        elif kind == 'path' or not typed or not smartcase(typed, text):
             return None
-        return text if every or text.lower() != typed.lower() else None   # a query: the word itself too
+        return text if text.lower() != typed.lower() else None
     out, seen = [], set()
-    for text, row, end in ranked(pane, start, accept, before, where=where):
-        if every or text not in seen:
+    for text, row, end in ranked(pane, start, accept, before):
+        if text not in seen:
             seen.add(text)
             out.append((text, after(pane.screen, pane.cy, row, end, start)))
     return out
@@ -557,6 +463,189 @@ def up_to(pane, start, word, exclusive=False):
             if text not in seen:
                 seen.add(text)
                 out.append({'text': text, 'following': following[end:]})
+    return out
+
+
+# ─── What is typed: a small language ─────────────────────────────────────────
+#
+# The text left of the cursor ends in an operator, or in a word to complete
+# from the screen (candidates). An operator:
+#
+#   ^ARG _ARG -ARG .ARG =ARG   ARG at a line's start (completed to its word),
+#                              the row that starts so, the list item, the
+#                              sentence, the entity that starts so (whole)
+#   N. N)                      the list item numbered N (whole)
+#   [QUERY] DOTS END           up to END: from where QUERY (one of ^ - . =
+#                              ARG) matches, else from where the text before
+#                              DOTS is on screen (up_to)
+#   DOTS  .. with the end, ... without it (@dabbrev-ruby-ranges; off: as ..)
+#   END   a word, $ (the line's end), $$ (the block's), . (the sentence's),
+#         ? or !
+#
+# A mark begins an operator when what is before it is not a letter or digit
+# (a line's start, a space, a quote, a bracket, another mark) and its
+# argument touches it (^ may have a space between). ARG runs to the cursor,
+# words and all; for ^ and _ it may start with punctuation (# heading, *
+# item), for - . = with a letter or digit, so "--" and ". " are text. A mark
+# with nothing of its kind matching is text: the last word is completed as
+# any. Sugar: a mark that stands for an operator, % its argument (SUGARS; more
+# in @dabbrev-sugars, a file of MARK TEXT lines).
+
+KINDS = {'^': 'line', '-': 'item', '.': 'sentence', '=': 'entity'}
+SUGARS = {'_': '^%..$'}                         # the row that starts so
+SUGARS_OPTION, SUGARS_DEFAULT = '@dabbrev-sugars', '~/.pi/agent/tmux-dabbrev.sugars'
+DOTS_END = re.compile(r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?])$")
+NUMBER_END = re.compile(r'(?:^|(?<=\W))(\d+)[.)]$')
+
+
+def sugars():
+    """SUGARS with the ones in the @dabbrev-sugars file (MARK TEXT a line, #
+    a comment; MARK one character that is not a letter, digit or mark)."""
+    out = dict(SUGARS)
+    path = tmux('show-options', '-gqv', SUGARS_OPTION).strip() or SUGARS_DEFAULT
+    try:
+        with open(os.path.expanduser(path), encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.strip().split(None, 1)
+        if (len(parts) == 2 and len(parts[0]) == 1 and not parts[0].isalnum()
+                and parts[0] not in KINDS and parts[0] not in ',\\#'):
+            out[parts[0]] = parts[1]
+    return out
+
+
+def op_start(text, i, marks):
+    """Whether the mark at I of TEXT begins an operator (see above)."""
+    ch = text[i]
+    if ch not in marks or (i and re.match(r'\w', text[i - 1])) or text[i - 1:i + 1] == '..':
+        return False                            # a dot after a dot is ..
+    arg = text[i + 1:]
+    if ch == '^' and arg.startswith(' '):
+        arg = arg[1:]
+    if not arg or arg[0].isspace():
+        return False
+    return ch not in KINDS or ch == '^' or bool(re.match(r'\w', arg))
+
+
+def last_unit(before, marks):
+    """The operator BEFORE ends in, as {'start', 'text', 'kind', ...}, or None:
+    kind 'upto' (QUERY? MARK and ARG, DOTS, END), 'mark' (MARK, ARG) or
+    'number' (NUMBER)."""
+    m = DOTS_END.search(before)
+    if m:
+        dots, end = m.groups()
+        head = before[:m.start()]
+        query = last_mark(head.rstrip(' ') if head.endswith(' ') else head, KINDS)
+        if query and query['text'].strip():
+            return {'kind': 'upto', 'start': query['start'], 'text': before[query['start']:],
+                    'mark': query['mark'], 'arg': query['arg'], 'dots': dots, 'end': end}
+        return {'kind': 'upto', 'start': m.start(), 'text': m.group(), 'mark': None, 'arg': None,
+                'dots': dots, 'end': end}
+    unit = last_mark(before, marks)
+    n = NUMBER_END.search(before)
+    if n and (not unit or n.start() > unit['start']):
+        return {'kind': 'number', 'start': n.start(), 'text': n.group(), 'number': n.group(1)}
+    return unit
+
+
+def last_mark(text, marks):
+    """The last operator of a mark in MARKS in TEXT, running to its end: as
+    {'kind': 'mark', 'start', 'text', 'mark', 'arg'}, or None. A mark right
+    after another (^-x) is the other's argument."""
+    for i in range(len(text) - 1, -1, -1):
+        if op_start(text, i, marks) and not (i and op_start(text, i - 1, marks)):
+            arg = text[i + 1:]
+            if text[i] == '^' and arg.startswith(' '):
+                arg = arg[1:]
+            return {'kind': 'mark', 'start': i, 'text': text[i:], 'mark': text[i], 'arg': arg}
+    return None
+
+
+def places(pane, kind, number=None):
+    """[(row, a, b)] where KIND's matches may start on the screen (not the
+    cursor's row): line starts (a row's first character past spaces and
+    marks that are not ASCII, and its first word), list items' text (with
+    NUMBER, of those numbered so), sentence starts, entities (B their end;
+    else None)."""
+    out = []
+    for row, line in enumerate(pane.screen):
+        if row == pane.cy or not line.strip():
+            continue
+        if kind == 'line':
+            first = next((i for i, ch in enumerate(line)
+                          if not (ch.isspace() or (not ch.isascii() and not ch.isalnum()))), None)
+            word = WORD.search(line)
+            for a in sorted({p for p in (first, word and word.start()) if p is not None}):
+                out.append((row, a, None))
+        elif kind == 'item':
+            m = LIST_MARK.match(line)
+            if m and (number is None or re.fullmatch(r'\W*?' + re.escape(number) + r'[.)]\s+', m.group())):
+                out.append((row, m.end(), None))
+        elif kind == 'sentence':
+            out += [(row, m.start(), None) for m in WORD.finditer(line) if sentence_start(pane, row, m.start())]
+        else:
+            out += [(row, a, b) for a, b, k in pane.items(row) if k == 'span']
+    return out
+
+
+def matching(pane, start, kind, arg, number=None):
+    """[(row, a, b, following, q)] of the places of KIND (places) whose text
+    starts with ARG (its words with any spaces between, smart case; the
+    entity's own text for one), best first (as ranked: entities first, then
+    by the words before them, then the pane's order); FOLLOWING is the text
+    from the place on (after), Q where ARG ends in it, then to its word's
+    end."""
+    pattern = re.compile(r'\s+'.join(map(re.escape, arg.split())), 0 if arg != arg.lower() else re.I)
+    before = WORD.findall(pane.screen[pane.cy][:start])[-CONTEXT:]
+    found = []
+    for row, a, b in places(pane, kind, number):
+        following = after(pane.screen, pane.cy, row, a, 0)
+        m = pattern.match(pane.screen[row][a:b] if b is not None else following)
+        if not m:
+            continue
+        q = m.end() + len(re.match(r'\S*', following[m.end():]).group())
+        head = '\n'.join(pane.screen[:row] + [pane.screen[row][:a]])
+        span = kind == 'entity' or any(x == a and k == 'span' for x, _, k in pane.items(row))
+        found.append((not span, -context(WORD.findall(head)[-CONTEXT:], before), row, a, b, following, q))
+    found.sort(key=lambda f: (f[0], f[1], *ORDERS[pane.order(not f[0])](pane, f[2], f[3], start, 1), f[2], f[3]))
+    return [f[2:] for f in found]
+
+
+def anchored(pane, start, unit):
+    """The alternatives for a mark or number operator UNIT (last_unit), or for
+    one before DOTS END (upto): each match once, best first."""
+    kind = 'item' if unit['kind'] == 'number' else KINDS[unit['mark']]
+    arg = '' if unit['kind'] == 'number' else unit['arg']
+    upto = unit['kind'] == 'upto'
+    exclusive = upto and unit['dots'] == '...' and pane.ruby_ranges()
+    out, seen = [], set()
+    for row, a, b, following, q in matching(pane, start, kind, arg, unit.get('number')):
+        if upto:
+            found = ends(following[q:], unit['end'], exclusive)
+            if not found:
+                continue
+            end = q + found[0]
+            text, rest = taken(following, end), following[end:]
+        elif kind == 'line':
+            text, rest = taken(following, q), following[q:]
+        elif kind == 'item':
+            text, rest = item_at(pane, row, a)
+        elif kind == 'sentence':
+            m = PART_END.search(following)
+            stop, block = ends(following, '.'), m.start() if m else len(following.rstrip())
+            end = stop[0] if stop and stop[0] <= block else block
+            text, rest = taken(following, end), following[end:]
+        else:
+            text, rest = pane.screen[row][a:b], after(pane.screen, pane.cy, row, b, 0)
+        if unit['kind'] == 'number':
+            text = unit['text'] + ' ' + text
+        if text and text not in seen:
+            seen.add(text)
+            out.append({'text': text + ' ', 'following': rest})
+    if kind == 'entity' and not upto:           # =: those of more words first
+        out.sort(key=lambda alt: ' ' not in alt['text'].rstrip())
     return out
 
 
@@ -664,91 +753,44 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
-        m = (QUERY_UPTO.search(pane.before) or UPTO_TYPED.search(pane.before)
-             or LINE_TYPED.search(pane.before) or NUMBER_TYPED.search(pane.before))
-        if m:
-            return m.start(), m.group()
+        unit = last_unit(pane.before, set(KINDS) | set(pane.sugars()))
+        if unit:
+            return unit['start'], unit['text']
         least = 2 if key == 'tab' else 1
         m = TYPED.search(pane.before)
-        if m and re.fullmatch(r'_\w[\w\'./-]*', m.group()) and re.search(OPEN + '$', pane.before[:m.start()]):
-            return m.start(), m.group()             # _word: the row that starts so
         if m:
-            lead = pane.before[:m.start()]
-            mark = re.search(OPEN + r'[-.=]$', lead)
-            if mark:                                # -word, .word (MARKS), =word
-                return m.start() - 1, mark.group() + m.group()
             return (m.start(), m.group()) if len(m.group()) >= least else None
         if len(re.search(r'\S*$', pane.before).group()) >= least:
             return len(pane.before), ''         # punctuation only: for the spans that start with it
         return None
 
     def complete(self, pane, start, typed):
-        if typed.startswith('..'):
-            dots, target = re.fullmatch(UPTO, typed).groups()
-            return up_to(pane, start, target, exclusive=dots == '...' and pane.ruby_ranges())
-        if typed[:1] == '_' and len(typed) > 1:   # _xyz: ^xyz..$, else as before
-            return self.query_up_to(pane, start, '^' + typed[1:], '$') or self.words(pane, start, typed)
-        m = QUERY_UPTO.fullmatch(typed)
-        if m:                                       # ^T..$$: each match of ^T, taken on
-            dots, target = re.fullmatch(UPTO, m.group('op')).groups()
-            return self.query_up_to(pane, start, m.group('query'), target,
-                                    exclusive=dots == '...' and pane.ruby_ranges())
-        if typed.startswith('^'):                   # line starts only; the ^ goes
-            word = typed.lstrip('^ ')
-            return self.words(pane, start + len(typed) - len(word), word, line_start)
-        if typed[:1] == '=':                        # =word: entities only, of more words first
-            alts = self.words(pane, start + 1, typed[1:], spans_only=True)
-            return sorted(alts, key=lambda alt: ' ' not in alt['text'].rstrip())
-        if NUMBER_TYPED.fullmatch(typed):            # 2.: the items numbered so, whole
-            alts = list_items(pane, start, '', number=typed[:-1])
-            return [{**alt, 'text': typed + ' ' + alt['text']} for alt in alts] or self.words(pane, start, typed)
-        if typed[:1] in MARKS:                      # -word, .word: the mark gone; else as before
-            word = typed[1:]
-            return MARKS[typed[0]](pane, start + 1, word) or [
-                {**alt, 'text': typed[0] + alt['text']} for alt in self.words(pane, start + 1, word)]
-        return self.words(pane, start, typed)      # "- W", ". W": text, not anchors
+        sugar = pane.sugars()
+        unit = last_unit(typed, set(KINDS) | set(sugar))
+        if not unit or unit['start']:
+            return self.words(pane, start, typed)
+        if unit['kind'] == 'upto' and not unit['mark']:
+            alts = up_to(pane, start, unit['end'], unit['dots'] == '...' and pane.ruby_ranges())
+        elif unit['kind'] == 'mark' and unit['mark'] in sugar:
+            meant = last_unit(sugar[unit['mark']].replace('%', unit['arg']), set(KINDS))
+            alts = anchored(pane, start, meant) if meant and not meant['start'] and meant['mark'] else []
+        else:
+            alts = anchored(pane, start, unit)
+        return alts or self.fallback(pane, start, typed)
 
-    def query_up_to(self, pane, start, query, target, exclusive=False):
-        """The matches of QUERY (typed from START) at every place on screen:
-        its first word where its anchor says (a line's start, a list item's,
-        a sentence's, an entity), the rest the words that follow there, each
-        a prefix (smart case), the word itself too; each
-        taken on to its first end for TARGET (ends): one alternative a
-        match, so M-/ goes on to the next."""
-        head = re.match(QUERY, query).group()
-        rest = query[len(head):].split()
-        word = re.sub(r'^(?:\^ ?|[-.=])', '', head)
-        # The mark stands for its word only: -F is a list item's first word,
-        # not the whole item, so -F.... ends at that word's sentence's end.
-        where = {'^': line_start, '-': list_item, '.': sentence_start, '=': None}[head[0]]
-        before, pane.before = pane.before, pane.before[:start + len(head)]
-        try:
-            alts = self.words(pane, start + len(head) - len(word), word, where,
-                              spans_only=head[0] == '=', every=True)
-        finally:
-            pane.before = before
-        out, seen = [], set()
-        for alt in alts:
-            following, text = alt.get('following'), alt['text'].rstrip()
-            for word in rest if following is not None else ():
-                m = WORD.search(following)
-                if not m or re.search(r'\w', following[:m.start()]) or not smartcase(word, m.group()):
-                    following = None
-                    break
-                text += taken(following, m.end())
-                following = following[m.end():]
-            found = ends(following, target, exclusive) if following is not None else []
-            if found:
-                text = text + taken(following, found[0]) + ' '
-                if text not in seen:
-                    seen.add(text)
-                    out.append({'text': text, 'following': following[found[0]:]})
-        return out
+    def fallback(self, pane, start, typed):
+        """An operator with nothing of its kind matching is text: its last word
+        completed as any (-Wall, ^Howitzer, _private)."""
+        m = TYPED.search(typed)
+        if not m:
+            return []
+        return [{**alt, 'text': typed[:m.start()] + alt['text']}
+                for alt in self.words(pane, start + m.start(), m.group())]
 
     @staticmethod
-    def words(pane, start, typed, where=None, spans_only=False, every=False):
+    def words(pane, start, typed):
         return [{'text': text + ' ', 'following': following}
-                for text, following in candidates(pane, start, typed, where, spans_only, every)]
+                for text, following in candidates(pane, start, typed)]
 
     def follow(self, pane, start, chosen):
         return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}
@@ -767,7 +809,9 @@ class Program:
     def typed(self, pane, key):
         token = re.search(r'\S*$', pane.before).group()
         if key == 'tab' and token[:1] in ('@', '/'):
-            return len(pane.before) - len(token), token
+            unit = last_unit(pane.before, set(KINDS) | set(pane.sugars()))
+            if not unit or unit['start'] <= len(pane.before) - len(token):
+                return len(pane.before) - len(token), token
         return None
 
     def complete(self, pane, start, typed):
@@ -850,12 +894,17 @@ class Pane:
         self.cy = cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
         self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
-        self._cwd = self._escaped = self._order = self._kinds = None
+        self._cwd = self._escaped = self._order = self._kinds = self._sugars = None
 
     def cwd(self):
         if self._cwd is None:
             self._cwd = tmux('display-message', '-p', '-t', self.pane, '#{pane_current_path}').strip()
         return self._cwd
+
+    def sugars(self):
+        if self._sugars is None:
+            self._sugars = sugars()
+        return self._sugars
 
     def ruby_ranges(self):
         """Whether ... leaves the end out (@dabbrev-ruby-ranges, on unless off)."""

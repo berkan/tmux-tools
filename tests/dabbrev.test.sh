@@ -234,7 +234,7 @@ typed '^ How'
 expect "  ... ^ and a space the same" 'Howdy |Howling |^ How|' "$(cycle 1 2 3)"
 editor 'see Howitzer here'
 typed '^How'; dab tab
-expect "  ... none such: nothing, Tab goes through" '1 ^How' "$(tabs) $(line)"
+expect "  ... none such: the word completes as any, the ^ kept" '0 ^Howitzer ' "$(tabs) $(line)"
 editor 'Thanks first.' '' 'say Thatcher here' 'done. Thawing now: then more.'
 typed 'ok. Tha'
 expect "\". \" is text, not an anchor: all words" 'ok. Thanks |ok. Thatcher |ok. Thawing |' "$(cycle 1 2 3)"
@@ -435,7 +435,7 @@ dab expand
 expect "  ... M-/: the next that starts so, not the next end" 'That one claims ' "$(line)"
 editor "${PARA[@]}"
 typed '...cons'; dab tab
-expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
+expect "nothing before it: the word completes as any" '0 ...consumes ' "$(tabs) $(line)"
 
 tmux set -gu @dabbrev-ruby-ranges
 
