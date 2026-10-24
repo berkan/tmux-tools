@@ -34,7 +34,7 @@ class Pane(d.Pane):
         self._cwd, self._escaped = '/', list(self.screen)
         self._order = {False: 'top', True: 'top'}
         self._kinds = {'camelcase', 'capitalised'}
-        self._sugars = None
+        self._sugars = self._marks = None
 
     def state(self, before=None):
         return None
@@ -161,6 +161,33 @@ ok = found == (2, 'Snapshot | ,r')
 passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
 print('  ✓ it is the first backend, before the snippets' if ok else f'  ✗ first backend: {found}')
 del OPTIONS['@dabbrev-snippets']
+
+print('a space between a mark and its argument: none, but for the marks in @dabbrev-spaced-marks')
+SPACED = ['The model here', 'see Thorn here', 'Snapshot of the state', '- Which one', 'Then more', '1. First thing', '2. Second thing']
+open(SNIP, 'w').write('rr  re: "|" --\\s\n')
+OPTIONS['@dabbrev-snippets'] = SNIP
+def check(name, ok, got):
+    global passed, failed
+    passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
+    print(f'  ✓ {name}' if ok else f'  ✗ {name}: got {got}')
+got = alternatives(SPACED, '^ Th')
+check('^ Th: by default not an operator, the word completes as any', 'Thorn ' in got, got)
+expect('  ... \\ hello world | ,r: nor \\, the word before the |', ['re: "world" -- '], SPACED, '\\ hello world | ,r')
+expect('  ... (,rr: a snippet counts after anything but a letter or digit, as the others', ['re: "" -- '], SPACED, '(,rr')
+OPTIONS['@dabbrev-spaced-marks'] = '^_\\,'
+expect('^ Th: with ^ listed, the same as ^Th', ['The '], SPACED, '^ Th')
+expect('_ Sn: with _ listed', ['Snapshot of the state '], SPACED, '_ Sn')
+expect('^ Sn..$: and before ..', ['Snapshot of the state '], SPACED, '^ Sn..$')
+expect('-Wh..^Th: (as the end)', ['Which one Then '], SPACED, '-Wh..^Th')
+expect('-Wh..^ Th: and as the end', ['Which one Then '], SPACED, '-Wh..^ Th')
+expect('\\ hello world | ,r: with \\ listed', ['re: "hello world" -- '], SPACED, '\\ hello world | ,r')
+expect('1. \\ then 2.: in a chain, the space not in the text', ['1. First thing then 2. Second thing '], SPACED, '1. \\ then 2.')
+expect(', rr: with , listed', ['re: "" -- '], SPACED, ', rr')
+got = alternatives(SPACED, '- Wh')
+check('- Wh: - not listed, so text', 'Which ' in got, got)
+got = alternatives(SPACED, '^  Th')
+check('one space only: ^ and two is text', 'Thorn ' in got, got)
+del OPTIONS['@dabbrev-spaced-marks'], OPTIONS['@dabbrev-snippets']
 
 print('explain')
 pane = Pane(LISTS, '')

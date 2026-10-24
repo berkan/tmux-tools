@@ -105,7 +105,6 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 RUBY_OPTION = '@dabbrev-ruby-ranges'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
-SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),(\w*)$')          # names: letters, digits, _
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
@@ -527,7 +526,8 @@ def up_to(pane, start, word, exclusive=False):
 #
 # A mark begins an operator when what is before it is not a letter or digit
 # (a line's start, a space, a quote, a bracket, another mark) and its
-# argument touches it (^ may have a space between). ARG runs to the cursor,
+# argument touches it (or is one space after it, for the marks named in
+# @dabbrev-spaced-marks: Marks; the same for , and \). ARG runs to the cursor,
 # words and all; for ^ and _ it may start with punctuation (# heading, *
 # item), for - . = with a letter or digit, so "--" and ". " are text. A mark
 # with nothing of its kind matching is text: the last word is completed as
@@ -538,7 +538,8 @@ def up_to(pane, start, word, exclusive=False):
 KINDS = {'^': 'line', '-': 'item', '.': 'sentence', '=': 'entity'}
 SUGARS = {'_': '^%..$'}                         # the row that starts so
 SUGARS_OPTION, SUGARS_DEFAULT = '@dabbrev-sugars', '~/.config/tmux-dabbrev/sugars'
-DOTS_END = re.compile(r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?]|\^ ?\S.*|-(?:\w.*)?)$")
+SPACED_OPTION = '@dabbrev-spaced-marks'
+DOTS_END = r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?]|\^{caret}\S.*|-(?:{dash}\w.*)?)$"   # Marks fills in the spaces
 NUMBER_END = re.compile(r'(?:^|(?<=\W))(\d+)[.)]$')
 
 
@@ -560,14 +561,45 @@ def sugars():
     return out
 
 
+class Marks:
+    """The marks that begin operators (MARKS), and the marks (of those, or ,
+    or \\) whose argument may be one space after them (SPACED): what each
+    piece of the language asks about a mark."""
+
+    def __init__(self, marks, spaced=''):
+        self.marks, self.spaced = set(marks), set(spaced) - {' '}
+        space = lambda mark: ' ?' if mark in self.spaced else ''
+        self.dots_end = re.compile(DOTS_END.format(caret=space('^'), dash=space('-')))
+        self.pipe = re.compile(r'\s*\|\s*(,' + space(',') + r'\w+)$')    # ... | ,name
+
+    def __contains__(self, mark):
+        return mark in self.marks
+
+    def only(self, marks):
+        """These, but with only those of MARKS."""
+        return Marks(self.marks & set(marks), self.spaced)
+
+    def arg(self, text, i):
+        """Where the argument of the mark at I of TEXT begins."""
+        return i + 2 if text[i] in self.spaced and text[i + 1:i + 2] == ' ' else i + 1
+
+    def arg_of(self, unit):
+        """The argument of UNIT, a mark and what follows it."""
+        return unit[self.arg(unit, 0):]
+
+
+def mark_may_start(text, i):
+    """Whether what is before I of TEXT lets a mark there begin a unit: not a
+    letter or digit."""
+    return not (i and re.match(r'\w', text[i - 1]))
+
+
 def op_start(text, i, marks):
     """Whether the mark at I of TEXT begins an operator (see above)."""
     ch = text[i]
-    if ch not in marks or (i and re.match(r'\w', text[i - 1])) or text[i - 1:i + 1] == '..':
+    if ch not in marks or not mark_may_start(text, i) or text[i - 1:i + 1] == '..':
         return False                            # a dot after a dot is ..
-    arg = text[i + 1:]
-    if ch == '^' and arg.startswith(' '):
-        arg = arg[1:]
+    arg = text[marks.arg(text, i):]
     if not arg or arg[0].isspace():
         return False
     return ch not in KINDS or ch == '^' or bool(re.match(r'\w', arg))
@@ -577,11 +609,11 @@ def last_unit(before, marks):
     """The operator BEFORE ends in, as {'start', 'text', 'kind', ...}, or None:
     kind 'upto' (QUERY? MARK and ARG, DOTS, END), 'mark' (MARK, ARG) or
     'number' (NUMBER)."""
-    m = DOTS_END.search(before)
+    m = marks.dots_end.search(before)
     if m:
         dots, end = m.groups()
         head = before[:m.start()]
-        query = last_mark(head.rstrip(' ') if head.endswith(' ') else head, KINDS)
+        query = last_mark(head.rstrip(' ') if head.endswith(' ') else head, marks.only(KINDS))
         if query and query['text'].strip():
             return {'kind': 'upto', 'start': query['start'], 'text': before[query['start']:],
                     'mark': query['mark'], 'arg': query['arg'], 'dots': dots, 'end': end}
@@ -600,14 +632,13 @@ def last_mark(text, marks):
     after another (^-x) is the other's argument."""
     for i in range(len(text) - 1, -1, -1):
         if op_start(text, i, marks) and not (i and op_start(text, i - 1, marks)):
-            arg = text[i + 1:]
-            if text[i] == '^' and arg.startswith(' '):
-                arg = arg[1:]
+            arg = text[marks.arg(text, i):]
             return {'kind': 'mark', 'start': i, 'text': text[i:], 'mark': text[i], 'arg': arg}
     return None
 
 
-SNIPPET_AT = re.compile(r',(\w+)')
+NAME_AT = re.compile(r'\w+')                                     # a snippet's: letters, digits, _
+ARG_AT = re.compile(r'\S')
 NUMBER_AT = re.compile(r'(\d+)[.)](?=[\s,;:]|$)')
 JOINER = re.compile(r'[ \t,;:]*')
 
@@ -616,13 +647,13 @@ def unit_starts(text, i, marks, touching=False):
     """Whether a unit begins at I of TEXT: an operator (op_start), ,NAME, a
     number or \\TEXT, after anything but a letter or digit (or TOUCHING the
     unit before it)."""
-    if i and re.match(r'\w', text[i - 1]) and not touching:
+    if not mark_may_start(text, i) and not touching:
         return False
     ch = text[i]
     if ch == ',':
-        return bool(SNIPPET_AT.match(text, i))
+        return bool(NAME_AT.match(text, marks.arg(text, i)))
     if ch == '\\':
-        return i + 1 < len(text) and not text[i + 1].isspace()
+        return bool(ARG_AT.match(text, marks.arg(text, i)))
     if ch.isdigit():
         return bool(NUMBER_AT.match(text, i)) and not (i and text[i - 1].isdigit())
     return not (ch == '.' and i and text[i - 1] == '.') and op_start(' ' + text[i:], 1, marks)
@@ -633,9 +664,9 @@ def unit_end(text, i, marks, last):
     (or None), the others after one word (or None)."""
     ch = text[i]
     if ch == ',':
-        end = SNIPPET_AT.match(text, i).end()
+        end = NAME_AT.match(text, marks.arg(text, i)).end()
     elif ch == '\\':
-        end = next((k for k in range(i + 2, len(text)) if unit_starts(text, k, marks)), len(text))
+        end = next((k for k in range(marks.arg(text, i) + 1, len(text)) if unit_starts(text, k, marks)), len(text))
     elif ch.isdigit():
         end = NUMBER_AT.match(text, i).end()
     elif last:
@@ -843,15 +874,18 @@ class Snippets:
     name = 'snippets'
 
     def typed(self, pane, key):
-        m = SNIPPET_TYPED.search(pane.before)
-        if m and (m.group(1) or key == 'expand'):
-            return m.start(), m.group()
+        i = pane.before.rfind(',')
+        if i < 0 or not mark_may_start(pane.before, i):
+            return None
+        name = pane.marks().arg_of(pane.before[i:])
+        if re.fullmatch(r'\w*', name) and (name or key == 'expand'):
+            return i, pane.before[i:]
         return None
 
     def complete(self, pane, start, typed):
         out, seen = [], set()
         for name, raw in sorted(snippets().items()):
-            if smartcase(typed[1:], name) and raw not in seen:     # two names for one text: once
+            if smartcase(pane.marks().arg_of(typed), name) and raw not in seen:     # two names for one text: once
                 seen.add(raw)
                 text, back = snippet(raw)
                 out.append({'text': text, 'back': back})
@@ -859,9 +893,6 @@ class Snippets:
 
     def follow(self, pane, start, chosen):
         return []
-
-
-PIPE = re.compile(r'\s*\|\s*(,\w+)$')                             # ... | ,name
 
 
 class Pipe:
@@ -872,7 +903,7 @@ class Pipe:
     name = 'pipe'
 
     def typed(self, pane, key):
-        m = PIPE.search(pane.before)
+        m = pane.marks().pipe.search(pane.before)
         left = self.left(pane, pane.before[:m.start()]) if m else None
         return (left[0], pane.before[left[0]:]) if left else None
 
@@ -880,7 +911,7 @@ class Pipe:
     def left(pane, text):
         """(start, kind) of what goes in the snippet, at the end of TEXT: an
         operator or chain ('op'), a \\TEXT ('text'), a word ('word'); or None."""
-        marks = set(KINDS) | set(pane.sugars())
+        marks = pane.marks()
         chain = parse_chain(text, marks)
         unit = last_unit(text, marks)
         if chain:
@@ -894,7 +925,7 @@ class Pipe:
         return (m.start(), 'word') if m else None
 
     def complete(self, pane, start, typed):
-        m = PIPE.search(typed)
+        m = pane.marks().pipe.search(typed)
         text = typed[:m.start()]
         snippet = Snippets().complete(pane.at(pane.before[:start] + m.group(1), pane.after), start, m.group(1))
         left = self.left(pane, text)
@@ -904,7 +935,7 @@ class Pipe:
             values = [alt['text'][:len(alt['text']) - alt.get('back', 0)].rstrip()
                       for alt in Screen().complete(pane.at(pane.before[:start] + text, ''), start, text)]
         else:
-            values = [text[1:] if left[1] == 'text' else text]
+            values = [pane.marks().arg_of(text) if left[1] == 'text' else text]
         keep = ''
         if not any(values):                         # an operator that takes nothing: the word before it, as typed
             word = re.search(r'\S+$', text)
@@ -924,10 +955,10 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
-        chain = parse_chain(pane.before, set(KINDS) | set(pane.sugars()))
+        chain = parse_chain(pane.before, pane.marks())
         if chain:
             return chain[0], pane.before[chain[0]:]
-        unit = last_unit(pane.before, set(KINDS) | set(pane.sugars()))
+        unit = last_unit(pane.before, pane.marks())
         if unit:
             return unit['start'], unit['text']
         least = 2 if key == 'tab' else 1
@@ -939,17 +970,17 @@ class Screen:
         return None
 
     def complete(self, pane, start, typed):
-        sugar = pane.sugars()
-        chain = parse_chain(typed, set(KINDS) | set(sugar))
+        sugar, marks = pane.sugars(), pane.marks()
+        chain = parse_chain(typed, marks)
         if chain and not chain[0]:
             return self.chain_alts(pane, start, typed, chain[1])
-        unit = last_unit(typed, set(KINDS) | set(sugar))
+        unit = last_unit(typed, marks)
         if not unit or unit['start']:
             return self.words(pane, start, typed)
         if unit['kind'] == 'upto' and not unit['mark']:
             alts = up_to(pane, start, unit['end'], unit['dots'] == '...' and pane.ruby_ranges())
         elif unit['kind'] == 'mark' and unit['mark'] in sugar:
-            meant = last_unit(sugar[unit['mark']].replace('%', unit['arg']), set(KINDS))
+            meant = last_unit(sugar[unit['mark']].replace('%', unit['arg']), marks.only(KINDS))
             alts = anchored(pane, start, meant) if meant and not meant['start'] and meant['mark'] else []
         else:
             alts = anchored(pane, start, unit)
@@ -960,7 +991,7 @@ class Screen:
         if text.startswith(','):
             return Snippets().complete(pane, start, text)
         if text.startswith('\\'):
-            return [{'text': text[1:]}]
+            return [{'text': pane.marks().arg_of(text)}]
         return self.complete(pane, start, text)
 
     def chain_alts(self, pane, start, typed, units):
@@ -1029,7 +1060,7 @@ class Program:
     def typed(self, pane, key):
         token = re.search(r'\S*$', pane.before).group()
         if key == 'tab' and token[:1] in ('@', '/'):
-            unit = last_unit(pane.before, set(KINDS) | set(pane.sugars()))
+            unit = last_unit(pane.before, pane.marks())
             if not unit or unit['start'] <= len(pane.before) - len(token):
                 return len(pane.before) - len(token), token
         return None
@@ -1114,7 +1145,7 @@ class Pane:
         self.cx, self.cy = cx, cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
         self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
-        self._cwd = self._escaped = self._order = self._kinds = self._sugars = None
+        self._cwd = self._escaped = self._order = self._kinds = self._sugars = self._marks = None
 
     def at(self, before, after):
         """This pane with BEFORE and AFTER the cursor instead (a chain's
@@ -1132,6 +1163,11 @@ class Pane:
         if self._sugars is None:
             self._sugars = sugars()
         return self._sugars
+
+    def marks(self):
+        if self._marks is None:
+            self._marks = Marks(set(KINDS) | set(self.sugars()), tmux('show-options', '-gqv', SPACED_OPTION).strip())
+        return self._marks
 
     def ruby_ranges(self):
         """Whether ... leaves the end out (@dabbrev-ruby-ranges, on unless off)."""
@@ -1328,13 +1364,13 @@ def explain(pane, text):
     """Lines saying how TEXT, typed before the cursor in PANE, is read: its
     units (a chain's, or the one), what is between them, and what each takes
     from the screen (the first few), then what Tab would type."""
-    marks = set(KINDS) | set(pane.sugars())
+    marks = pane.marks()
     piped = Pipe().typed(pane.at(text, ''), 'tab')
     if piped:
-        m = PIPE.search(text)
+        m = marks.pipe.search(text)
         left = Pipe.left(pane, text[:m.start()])
         alts = Pipe().complete(pane.at(text, ''), *piped)
-        return [f'{text!r}: a pipe', f"  {text[piped[0]:m.start()]!r} ({left[1]}) into the snippet {m.group(1)[1:]!r}",
+        return [f'{text!r}: a pipe', f"  {text[piped[0]:m.start()]!r} ({left[1]}) into the snippet {marks.arg_of(m.group(1))!r}",
                 'Tab types: ' + (repr(alts[0]['text']) if alts else 'nothing (Tab goes to the program)')]
     chain = parse_chain(text, marks)
     unit = last_unit(text, marks)
@@ -1347,9 +1383,9 @@ def explain(pane, text):
         part = text[a:b]
         u = last_unit(part, marks)
         if part.startswith(','):
-            what = f'snippet {part[1:]!r}'
+            what = f'snippet {marks.arg_of(part)!r}'
         elif part.startswith('\\'):
-            what = f'text {part[1:]!r}'
+            what = f'text {marks.arg_of(part)!r}'
         elif u and u['kind'] == 'number':
             what = f'number {part!r}'
         elif u and u['kind'] == 'upto':

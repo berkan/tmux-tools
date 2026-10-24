@@ -230,8 +230,10 @@ editor 'Howdy partner' 'see Howitzer here' '  Howling at the start'
 typed '^How'
 expect "^: only words that begin a line, the ^ gone" 'Howdy |Howling |^How|' "$(cycle 1 2 3)"
 editor 'Howdy partner' 'see Howitzer here' '  Howling at the start'
+tmux set -g @dabbrev-spaced-marks '^'
 typed '^ How'
-expect "  ... ^ and a space the same" 'Howdy |Howling |^ How|' "$(cycle 1 2 3)"
+expect "  ... with ^ in @dabbrev-spaced-marks, ^ and a space the same" 'Howdy |Howling |^ How|' "$(cycle 1 2 3)"
+tmux set -gu @dabbrev-spaced-marks
 editor 'see Howitzer here'
 typed '^How'; dab tab
 expect "  ... none such: the word completes as any, the ^ kept" '0 ^Howitzer ' "$(tabs) $(line)"
@@ -278,11 +280,13 @@ typed '2.'; dab tab
 expect "  ... no such item: as before" '2.5 ' "$(line)"
 
 LIST=('Thanks first.' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
+tmux set -g @dabbrev-spaced-marks '^'
 for t in '^H|Howdy ' '^ H|Howdy ' '-W|Which one ' '.t|Thanks first. '; do
     editor "${LIST[@]}"
     typed "${t%%|*}"; dab tab
     expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
 done
+tmux set -gu @dabbrev-spaced-marks
 for t in '- W' '. T'; do
     editor "${LIST[@]}"
     typed "$t"; dab tab
@@ -392,11 +396,13 @@ typed 'see ...'; dab tab
 expect "  ... a . inside a word ends no sentence" 'see file.py now. ' "$(line)"
 BLOCK=('The other direction: a pattern without claims, such' '  as When /p/ is, matches claims. That is in' '  prelude.tcl: if not, it queries' '' 'Then later')
 WHOLE='The other direction: a pattern without claims, such as When /p/ is, matches claims. That is in prelude.tcl: if not, it queries '
+tmux set -g @dabbrev-spaced-marks '^'
 for q in '^T..$$' '^T ..$$' '^ T ...$$'; do
     editor "${BLOCK[@]}"
     typed "$q"; dab tab
     expect "${q}: an anchored query before .. is completed first" "$WHOLE" "$(line)"
 done
+tmux set -gu @dabbrev-spaced-marks
 editor "${BLOCK[@]}"
 typed '^T..$$'; dab tab expand
 expect "  ... M-/: the next block that starts so" 'Then later ' "$(line)"

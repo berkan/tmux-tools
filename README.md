@@ -83,6 +83,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-ruby-ranges` | `..` takes the end and `...` stops before it, as Ruby's ranges [on]; `off`: both take it |
 | `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
 | `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
+| `@dabbrev-spaced-marks` | the marks whose argument may also be one space after them, as `^ The` or `\ some text` [none]; for marks that do not come before a space in ordinary text, such as `'^_\'` (with `-` `.` `=` `,`, prose like `- item` would be read as an operator) |
 
 Entities come before words. A completion after an opening quote or bracket
 is closed with its pair (`"hel` → `"hello" `).
@@ -211,7 +212,8 @@ ticket  regex  [A-Z]+-\d+
 What is typed before the cursor is read for operators; with none, the last
 word is completed from the screen. An operator's mark counts after anything
 but a letter or digit (a space, a quote, a bracket, `/`), and its argument
-touches it.
+touches it (or is one space after it, for the marks in
+`@dabbrev-spaced-marks`). The same holds for `,name` and `\text`.
 
 | typed | Tab gives |
 |---|---|
