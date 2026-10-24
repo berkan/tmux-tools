@@ -8,7 +8,8 @@
 #
 #   pipe          ... | ,NAME: what is left of the | (an operator or chain,
 #                 expanded; a \TEXT; else the word before it) put in the
-#                 snippet NAME, where its | is (Pipe).
+#                 snippet NAME, where its | is; ... |( between the pair, for
+#                 each pair of @electric-pair-pairs (Pipe).
 #   snippets      a word starting , (,rr): the snippets in the file named by
 #                 @dabbrev-snippets (default ~/.config/tmux-dabbrev/snippets)
 #                 whose names start with the rest, by name; Tab needs a
@@ -106,6 +107,7 @@ RUBY_OPTION = '@dabbrev-ruby-ranges'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
+PAIRS_OPTION, PAIRS_DEFAULT = '@electric-pair-pairs', '()[]{}""' "''" '``'   # electric-pair's, for LEFT |(
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
 ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
@@ -568,9 +570,7 @@ class Marks:
 
     def __init__(self, marks, spaced=''):
         self.marks, self.spaced = set(marks), set(spaced) - {' '}
-        space = lambda mark: ' ?' if mark in self.spaced else ''
-        self.dots_end = re.compile(DOTS_END.format(caret=space('^'), dash=space('-')))
-        self.pipe = re.compile(r'\s*\|\s*(,' + space(',') + r'\w+)$')    # ... | ,name
+        self.dots_end = re.compile(DOTS_END.format(caret=self.gap('^'), dash=self.gap('-')))
 
     def __contains__(self, mark):
         return mark in self.marks
@@ -578,6 +578,10 @@ class Marks:
     def only(self, marks):
         """These, but with only those of MARKS."""
         return Marks(self.marks & set(marks), self.spaced)
+
+    def gap(self, mark):
+        """What may be between MARK and its argument, as a regular expression."""
+        return ' ?' if mark in self.spaced else ''
 
     def arg(self, text, i):
         """Where the argument of the mark at I of TEXT begins."""
@@ -897,13 +901,32 @@ class Snippets:
 
 class Pipe:
     """LEFT | ,NAME: LEFT's expansion put in the snippet NAME, where its | is
-    (none: at its end), the cursor after it all. LEFT is the operator or
-    chain right before the |, expanded (M-/ cycles it); else a \\TEXT, as it
-    is, words and all; else the one word before it, as typed."""
+    (none: at its end), the cursor after it all; LEFT |( (an opener of
+    @electric-pair-pairs): between the pair, the same way (with the closer
+    right after the cursor already, typed by electric-pair: ending against
+    it). LEFT is the operator or chain right before the |, expanded (M-/
+    cycles it); else a \\TEXT, as it is, words and all; else the one word
+    before it, as typed."""
     name = 'pipe'
 
+    @staticmethod
+    def pattern(pane):
+        """... | ,NAME or ... |( : the | and what it puts LEFT in (group 1)."""
+        into = [',' + pane.marks().gap(',') + r'\w+'] + ([f'[{re.escape("".join(pane.pairs()))}]'] if pane.pairs() else [])
+        return re.compile(r'\s*\|\s*(' + '|'.join(into) + ')$')
+
+    @staticmethod
+    def into(pane, start, target):
+        """(body, cut): the text TARGET (,NAME or an opener), typed from START,
+        puts LEFT in, at CUT; or None."""
+        if target.startswith(','):
+            snippet = Snippets().complete(pane.at(pane.before[:start] + target, pane.after), start, target)
+            return (snippet[0]['text'], len(snippet[0]['text']) - snippet[0].get('back', 0)) if snippet else None
+        close = pane.pairs()[target]
+        return (target, 1) if pane.after.startswith(close) else (target + close, 1)
+
     def typed(self, pane, key):
-        m = pane.marks().pipe.search(pane.before)
+        m = self.pattern(pane).search(pane.before)
         left = self.left(pane, pane.before[:m.start()]) if m else None
         return (left[0], pane.before[left[0]:]) if left else None
 
@@ -925,11 +948,11 @@ class Pipe:
         return (m.start(), 'word') if m else None
 
     def complete(self, pane, start, typed):
-        m = pane.marks().pipe.search(typed)
+        m = self.pattern(pane).search(typed)
         text = typed[:m.start()]
-        snippet = Snippets().complete(pane.at(pane.before[:start] + m.group(1), pane.after), start, m.group(1))
+        into = self.into(pane, start, m.group(1))
         left = self.left(pane, text)
-        if not snippet or not left or left[0]:
+        if not into or not left or left[0]:
             return []
         if left[1] == 'op':
             values = [alt['text'][:len(alt['text']) - alt.get('back', 0)].rstrip()
@@ -942,8 +965,7 @@ class Pipe:
             if not word:
                 return []
             keep, values = text[:word.start()], [word.group()]
-        body, back = snippet[0]['text'], snippet[0].get('back', 0)
-        cut = len(body) - back
+        body, cut = into
         return [{'text': keep + body[:cut] + value + body[cut:]} for value in dict.fromkeys(values) if value]
 
     def follow(self, pane, start, chosen):
@@ -1145,7 +1167,7 @@ class Pane:
         self.cx, self.cy = cx, cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
         self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
-        self._cwd = self._escaped = self._order = self._kinds = self._sugars = self._marks = None
+        self._cwd = self._escaped = self._order = self._kinds = self._sugars = self._marks = self._pairs = None
 
     def at(self, before, after):
         """This pane with BEFORE and AFTER the cursor instead (a chain's
@@ -1163,6 +1185,15 @@ class Pane:
         if self._sugars is None:
             self._sugars = sugars()
         return self._sugars
+
+    def pairs(self):
+        """{opener: closer} from @electric-pair-pairs, as electric-pair has them."""
+        if self._pairs is None:
+            text = tmux('show-options', '-gqv', PAIRS_OPTION).rstrip('\n')
+            if text == '' and not tmux('show-options', '-gq', PAIRS_OPTION):
+                text = PAIRS_DEFAULT
+            self._pairs = {text[i]: text[i + 1] for i in range(0, len(text) - 1, 2)}
+        return self._pairs
 
     def marks(self):
         if self._marks is None:
@@ -1367,10 +1398,11 @@ def explain(pane, text):
     marks = pane.marks()
     piped = Pipe().typed(pane.at(text, ''), 'tab')
     if piped:
-        m = marks.pipe.search(text)
+        m = Pipe.pattern(pane).search(text)
         left = Pipe.left(pane, text[:m.start()])
         alts = Pipe().complete(pane.at(text, ''), *piped)
-        return [f'{text!r}: a pipe', f"  {text[piped[0]:m.start()]!r} ({left[1]}) into the snippet {marks.arg_of(m.group(1))!r}",
+        into = f'the snippet {marks.arg_of(m.group(1))!r}' if m.group(1).startswith(',') else f'the pair {m.group(1) + pane.pairs()[m.group(1)]!r}'
+        return [f'{text!r}: a pipe', f"  {text[piped[0]:m.start()]!r} ({left[1]}) into {into}",
                 'Tab types: ' + (repr(alts[0]['text']) if alts else 'nothing (Tab goes to the program)')]
     chain = parse_chain(text, marks)
     unit = last_unit(text, marks)

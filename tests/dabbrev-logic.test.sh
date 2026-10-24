@@ -34,14 +34,14 @@ class Pane(d.Pane):
         self._cwd, self._escaped = '/', list(self.screen)
         self._order = {False: 'top', True: 'top'}
         self._kinds = {'camelcase', 'capitalised'}
-        self._sugars = self._marks = None
+        self._sugars = self._marks = self._pairs = None
 
     def state(self, before=None):
         return None
 
 
-def alternatives(rows, before, key='tab'):
-    pane = Pane(rows, before)
+def alternatives(rows, before, key='tab', after=''):
+    pane = Pane(rows, before, after)
     for backend in d.BACKENDS:
         found = backend.typed(pane, key)
         if found:
@@ -188,6 +188,25 @@ check('- Wh: - not listed, so text', 'Which ' in got, got)
 got = alternatives(SPACED, '^  Th')
 check('one space only: ^ and two is text', 'Thorn ' in got, got)
 del OPTIONS['@dabbrev-spaced-marks'], OPTIONS['@dabbrev-snippets']
+
+print('LEFT |( : LEFT between a pair (@electric-pair-pairs)')
+expect('hello |(: the word in the pair', ['(hello)'], PIPED, 'hello |(')
+expect('  ... spaces round | or none', ['(hello)'], PIPED, 'hello|(')
+expect('  ... a quote', ['"hello"'], PIPED, 'hello |"')
+expect('  ... an operator, expanded', ['[Snapshot of the state]'], PIPED, '_Sn |[')
+expect('  ... \\TEXT, words and all', ['{hello world}'], PIPED, '\\hello world |{')
+expect('  ... M-/ cycles what is left of it', ['(The)', '(Then)'], PIPED, '^Th |(', 'expand')
+got = alternatives(PIPED, 'hello |(', after=')')
+check('  ... the closer after the cursor already (electric-pair typed it): ended against it', got == ['(hello'], got)
+got = alternatives(PIPED, 'hello |<')
+check('  ... not a pair: no surround', not got or '<hello>' not in got, got)
+OPTIONS['@electric-pair-pairs'] = '()<>'
+expect('  ... the pairs from @electric-pair-pairs', ['<hello>'], PIPED, 'hello |<')
+del OPTIONS['@electric-pair-pairs']
+loader = importlib.machinery.SourceFileLoader('pair', os.path.join(os.path.dirname(sys.argv[1]), 'tmux-electric-pair'))
+pair = importlib.util.module_from_spec(importlib.util.spec_from_loader('pair', loader))
+loader.exec_module(pair)
+check('  ... the default pairs are electric-pair\'s', d.PAIRS_DEFAULT == pair.PAIRS_DEFAULT, d.PAIRS_DEFAULT)
 
 print('explain')
 pane = Pane(LISTS, '')

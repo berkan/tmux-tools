@@ -524,6 +524,14 @@ editor 'Snapshot of the state' 'The model' 'Then more'
 typed '^Th | ,r'; dab tab expand
 expect "  ... ^Th | ,r, M-/: the next match in it" 're: "Then" -- ' "$(line)"
 tmux set -gu @dabbrev-snippets
+editor 'Snapshot of the state'
+typed 'see hello |('; dab tab
+expect "LEFT |( : LEFT in the pair, the cursor after it" 'see (hello)|11' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo: back to what was typed" 'see hello |(|12' "$(line)|$(cursor)"
+editor 'Snapshot of the state'
+typed 'see hello |()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab
+expect "  ... the closer after the cursor already: against it, the cursor before it" 'see (hello)|10' "$(line)|$(cursor)"
 editor "${CHAIN[@]}"
 typed '"1., 2.'; dab tab
 expect "  ... after a quote: the chain closed" '"1. First thing, 2. Second thing" ' "$(line)"

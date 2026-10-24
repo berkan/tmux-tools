@@ -229,6 +229,7 @@ touches it (or is one space after it, for the marks in
 | `-F....` | from a list item starting `F` to the end of its sentence, without the full stop |
 | `,re` | the snippet `re` |
 | `_Sn \| ,re` | the row starting `Sn`, put in the snippet `re` |
+| `hello \|(` | `(hello)`: between the pair, for each pair of electric-pair |
 
 Ends after `..` (with the end) or `...` (up to it): a word, `$` (the line's
 end), `$$` (the block's), `.` (the sentence's), `?`, `!`, `^Wh` (the next line
@@ -245,6 +246,12 @@ none, at its end), the cursor after it all: `Snapshot | ,re` gives
 `re: "Snapshot" -- `. LEFT is the operator or chain right before the `|`,
 expanded (`^Sn | ,re`, `1. 2. | ,re`; `M-/` cycles it), or a `\text` (words
 and all), or else the one word before the `|`, as typed.
+
+`LEFT |(` puts LEFT between a pair the same way: `hello |(` gives `(hello)`,
+`_Sn |"` the row in quotes. The pairs are electric-pair's
+(`@electric-pair-pairs`). When the closer is already after the cursor
+(electric-pair typed it with the opener), the text ends against it, the
+cursor before it, so typing the closer steps over it.
 
 An operator with nothing on screen to match is text: its word completes as
 any (`^Howitzer`). `M-/` cycles the last operator's matches; `M-?` takes the
