@@ -526,12 +526,16 @@ echo "after an opening quote or bracket, the completion is closed"
 editor 'say hello world here'
 typed 'x "hel'; dab tab
 expect "the closer after it" 'x "hello" ' "$(line)"
+closed() { tmux show-options -pqv -t "$PANE" @dabbrev-closed; }
+expect "  ... where it ends and the closer, in @dabbrev-closed (for electric-pair)" "12 $ROW \"" "$(closed)"
 dab tab
 expect "  ... and on after the words Tab adds" 'x "hello world" ' "$(line)"
+expect "  ... @dabbrev-closed with it" "18 $ROW \"" "$(closed)"
 dab undo
 expect "  ... undo with it" 'x "hello" ' "$(line)"
 dab undo
 expect "  ... back to what was typed" 'x "hel' "$(line)"
+expect "  ... @dabbrev-closed gone" '' "$(closed)"
 editor 'say hello world here'
 typed '"hello'; dab tab
 expect "  ... a whole word: on to the next, closed" '"hello world" ' "$(line)"
@@ -892,6 +896,15 @@ tmux set -g @dabbrev-tab-commands 'claude'
 python3 "$DAB" bind
 outer Tab
 expect "in other programs Tab goes straight through" 2 "$(tabs)"
+tmux set -g @dabbrev-tab-commands 'claude py.*'
+python3 "$DAB" bind
+editor 'garden two'
+outer -l ga; outer Tab
+expect "the programs are regular expressions for the whole name" 'garden ' "$(line)"
+tmux set -gu @dabbrev-tab-commands
+python3 "$DAB" bind
+expect "  ... by default with [0-9.]+ (Claude Code on macOS is named for its version)" 1 \
+    "$(tmux list-keys -T root Tab | grep -cF '|[0-9.]+)')"
 TMUX_TMPDIR="$SCRATCH/o" tmux kill-server
 
 echo "$pass passed, $fail failed"

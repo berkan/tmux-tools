@@ -82,7 +82,8 @@
 #
 #   tmux-dabbrev bind   bind the keys in @dabbrev-key (default M-/) and
 #       @dabbrev-undo-key (default M-?) without the prefix, and Tab in the
-#       programs named in @dabbrev-tab-commands (by #{pane_current_command};
+#       programs named in @dabbrev-tab-commands (by #{pane_current_command},
+#       each a regular expression for the whole name, with no , or };
 #       empty: Tab is left alone); run it from tmux.conf after setting them.
 #       All run in the foreground, so keys typed meanwhile wait and stay in
 #       order.
@@ -117,7 +118,8 @@ CAMEL = re.compile(r'(?<![\w])[A-Za-z0-9]*[a-z0-9][A-Z][A-Za-z0-9]*(?![\w])')
 ENTITIES_OPTION, ENTITIES_DEFAULT = '@dabbrev-entities', 'coloured camelcase capitalised'
 CAPITALISED = re.compile(r"(?<![\w'’-])[A-Z][\w'’-]+(?: [A-Z][\w'’-]+)+(?![\w'’-])")
 KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?')}
-TAB_OPTION, TAB_DEFAULT = '@dabbrev-tab-commands', 'claude codex pi node agy gemini'
+# Claude Code on macOS is named for its version (2.1.310).
+TAB_OPTION, TAB_DEFAULT = '@dabbrev-tab-commands', 'claude codex pi node agy gemini [0-9.]+'
 CONTEXT = 3                     # words before what was typed that rank a match
 # The order of matches that rank alike otherwise, named in @dabbrev-order for
 # words and paths and @dabbrev-span-order for coloured spans:
@@ -1109,7 +1111,7 @@ class Pane:
         self.middle = (height - 1) / 2
         # -N keeps trailing spaces, so a space left of the cursor is seen.
         self.screen = tmux('capture-pane', '-p', '-N', '-t', pane).split('\n')
-        self.cy = cy
+        self.cx, self.cy = cx, cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
         self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
         self._cwd = self._escaped = self._order = self._kinds = self._sugars = None
@@ -1180,8 +1182,16 @@ class Pane:
         return None
 
     def save(self, state):
+        """Keep STATE for the next press; and when the text ends with the
+        closer it added, say where in the pane option @dabbrev-closed ("X Y
+        CLOSER"), so that electric-pair does not type a second one there."""
         now = Pane(self.pane)
         state['at'] = [now.pid, now.cy, now.before]
+        (text, back), close = shown(state), state.get('close', '')
+        if close and not back and text.endswith(close + ' ') and now.before.endswith(close + ' '):
+            tmux('set-option', '-p', '-t', self.pane, '@dabbrev-closed', f'{now.cx} {now.cy} {close}')
+        else:
+            tmux('set-option', '-pu', '-t', self.pane, '@dabbrev-closed')
         with open(self.state_file(), 'w') as f:
             json.dump(state, f)
 
@@ -1304,7 +1314,7 @@ def bind():
         tmux('bind-key', '-n', key, 'run-shell', f"{script} {action} '#{{pane_id}}'")
         keys.append(key)
     if programs:
-        match = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(map(re.escape, programs))
+        match = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(programs)
         tmux('bind-key', '-n', 'Tab', 'if-shell', '-F', match,
              f"run-shell \"{script} tab '#{{pane_id}}'\"", 'send-keys Tab')
         keys.append('Tab')

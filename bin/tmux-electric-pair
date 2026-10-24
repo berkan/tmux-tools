@@ -1,39 +1,61 @@
 #!/usr/bin/env python3
-# tmux-electric-pair key KEY PANE — type KEY (a character, or BSpace) into
-# PANE as Emacs' electric-pair-mode would, from what the screen shows around
-# the program's cursor (tmux cannot see the program's input):
+# tmux-electric-pair — brackets and quotes typed in pairs, as Emacs'
+# electric-pair-mode, from what the screen shows around the program's cursor
+# (tmux cannot see the program's input):
 #   an opener   ( [ { types its pair, the cursor between: (|); not before a
 #               letter or digit, nor after a backslash
 #   a quote     " ' ` the same, and not after a letter or digit either (don't)
 #   a closer    ) ] } or a quote, with the same right after the cursor, steps
-#               over it instead of typing a second
-#   BSpace      between an empty pair, (|), takes both
-# Anything else is typed as it is. Then it waits (briefly) for the screen to
-# show the change, so the next key reads the screen as it now is.
+#               over it instead of typing a second; and right where dabbrev
+#               has just closed its completion with it ("hello" |), is not
+#               typed again (once)
+#   BSpace      in an empty pair it typed, (|), takes both
+# Anything else is typed as it is.
 #
 # The pairs are in the @electric-pair-pairs option, two characters each
 # [()[]{}""''``].
 #
 # tmux-electric-pair bind — bind each character of the pairs, and BSpace,
 # without the prefix, in the programs named in @electric-pair-commands (by
-# #{pane_current_command}) [claude codex pi node agy gemini]; elsewhere the
-# key goes on as it is. '' binds nothing. They run in the foreground, so keys
-# typed meanwhile wait and stay in order. Run it from tmux.conf after setting
+# #{pane_current_command}, each a regular expression for the whole name, with
+# no , or }) [claude codex pi node agy gemini [0-9.]+ — Claude Code on macOS is
+# named for its version]; elsewhere the key goes on as it is. '' binds nothing. Run it from tmux.conf after setting
 # the options.
+#
+# For speed, the bindings decide what they can in tmux's formats, with no
+# process (the character after the cursor is #{cursor_character}): a closer,
+# BSpace but in an empty pair it typed, an opener before a letter or digit. The rest
+# needs the character before the cursor too: `tmux-electric-pair key KEY
+# PANE X Y PAIRS` reads the row and types KEY; after typing or taking a pair,
+# or stepping over, it waits (briefly) for the program to show its cursor
+# where that leaves it, so that the next key's formats read the screen as it
+# now is. The bindings run in the
+# foreground, so keys typed meanwhile wait and stay in order.
 import os
-import re
-import subprocess
 import sys
 import time
 import unicodedata
 
 PAIRS_OPTION, PAIRS_DEFAULT = '@electric-pair-pairs', '()[]{}""' "''" '``'
-COMMANDS_OPTION, COMMANDS_DEFAULT = '@electric-pair-commands', 'claude codex pi node agy gemini'
+# Claude Code on macOS is named for its version (2.1.310).
+COMMANDS_OPTION, COMMANDS_DEFAULT = '@electric-pair-commands', r'claude codex pi node agy gemini [0-9.]+'
 
 
-def tmux(*args, check=True):
-    return subprocess.run(['tmux', *args], check=check, text=True,
-                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+def tmux(*args):
+    """Run tmux with ARGS, its output. (Not subprocess: importing it takes
+    longer than all the rest of a key.)"""
+    r, w = os.pipe()
+    null = os.open(os.devnull, os.O_WRONLY)
+    pid = os.posix_spawnp('tmux', ['tmux', *args], os.environ, file_actions=[
+        (os.POSIX_SPAWN_DUP2, w, 1), (os.POSIX_SPAWN_DUP2, null, 2), (os.POSIX_SPAWN_CLOSE, r)])
+    os.close(w)
+    os.close(null)
+    out = b''
+    while chunk := os.read(r, 65536):
+        out += chunk
+    os.close(r)
+    os.waitpid(pid, 0)
+    return out.decode('utf-8', 'replace')
 
 
 def option(name, default):
@@ -65,39 +87,75 @@ def left_of(line, cx):
     return line
 
 
-def around(pane):
-    """(before, after, state): the cursor's row left and right of it, and what
-    changes when the program redraws (the row and the cursor)."""
-    cx, cy = tmux('display-message', '-p', '-t', pane, '#{cursor_x} #{cursor_y}').split()
-    row = tmux('capture-pane', '-p', '-N', '-t', pane, '-S', cy, '-E', cy).rstrip('\n')
-    before = left_of(row, int(cx))
-    return before, row[len(before):], (row, cx, cy)
+def around(pane, cy, cx=None):
+    """(before, after, cx, cy): row CY left and right of the cursor, and where
+    the cursor is (CX: as given, else as it is now). One tmux call."""
+    out = tmux('display-message', '-p', '-t', pane, '#{cursor_x} #{cursor_y}', ';',
+               'capture-pane', '-p', '-N', '-t', pane, '-S', str(cy), '-E', str(cy))
+    now, _, row = out.partition('\n')
+    row = row.rstrip('\n')
+    x, y = (cx, cy) if cx is not None else map(int, now.split())
+    before = left_of(row, x)
+    return before, row[len(before):], x, y
 
 
-def keys_for(key, before, after, table):
-    """The keys to send for KEY with BEFORE and AFTER around the cursor: a
-    list of ('-l', text) and key names."""
-    prev, nxt = before[-1:], after[:1]
-    if key == 'BSpace':
-        if prev in table and nxt == table[prev]:
-            return ['Right', 'BSpace', 'BSpace']
-        return ['BSpace']
-    if key in table.values() and nxt == key:
-        return ['Right']
-    if key in table:
-        quote = table[key] == key
-        if not (nxt.isalnum() or prev == '\\' or (quote and prev.isalnum())):
-            return [('-l', key + table[key]), 'Left']
-    return [('-l', key)]
+# The pane option holding the places (|X:Y|...) where it left an empty pair:
+# BSpace there may take both, elsewhere it is BSpace with no process.
+EMPTY = '@electric-pair-empty'
 
 
-def press(key, pane):
-    before, after, state = around(pane)
-    for k in keys_for(key, before, after, pairs()):
-        tmux('send-keys', '-t', pane, *(['-l', '--', k[1]] if isinstance(k, tuple) else [k]))
+def until(pane, cy, done):
+    """Wait (at most 0.3 s) until DONE(before, after, cx, cy) holds for the
+    screen; what it last read, or None if it never did."""
     end = time.monotonic() + 0.3
-    while time.monotonic() < end and around(pane)[2] == state:
-        time.sleep(0.01)
+    while time.monotonic() < end:
+        now = around(pane, cy)
+        if done(*now):
+            return now
+        time.sleep(0.003)
+    return None
+
+
+def pairs_here(key, prev, nxt, table):
+    """Whether KEY, typed between PREV and NXT, should be paired."""
+    quote = table[key] == key
+    return not (nxt.isalnum() or prev == '\\' or (quote and prev.isalnum()))
+
+
+def press(key, pane, cx, cy, table, empty):
+    """Type KEY (an opener, or BSpace in an empty pair: the bindings do the
+    rest) into PANE, its cursor at column CX of row CY when the key was
+    pressed; TABLE the pairs, EMPTY the option of that name.
+
+    Keys typed just before may not be on the screen yet, so it is not read
+    ahead of KEY: an opener goes in first, and once the screen shows it
+    before the cursor, it shows all typed before it too, and the closer
+    follows if what is around it says so. BSpace goes in first too, and the
+    closer after it goes as well only if the screen then shows the row as it
+    was with the opener taken out: else something typed meanwhile changed it.
+    After a pair or a pair taken, it waits for the program's cursor, so that
+    the next key's formats read the screen as it now is."""
+    send = lambda *keys: tmux('send-keys', '-t', pane, *keys)
+    places = [p for p in empty.split('|') if p]
+    if key == 'BSpace':
+        before, after, _, _ = around(pane, cy, cx)
+        prev = before[-1:]
+        send('BSpace')
+        if prev in table and after[:1] == table[prev]:
+            back = cx - cell_width(prev)
+            now = until(pane, cy, lambda b, a, x, y: (x, y, b) == (back, cy, before[:-1]) and a.startswith(after[:1]))
+            if now:
+                left = [p for p in places if p != f'{cx}:{cy}']
+                send('Right', 'BSpace', ';', 'set-option', '-p', '-t', pane, EMPTY, '|' + '|'.join(left) + '|')
+                until(pane, cy, lambda b, a, x, y: x == back and b + a != now[0] + now[1])
+        return
+    send('-l', '--', key)
+    now = until(pane, cy, lambda b, a, x, y: (x, y) != (cx, cy) and b.endswith(key))
+    if now and pairs_here(key, now[0][-2:-1], now[1][:1], table):
+        places = [p for p in places if p != f'{now[2]}:{cy}'][-20:] + [f'{now[2]}:{cy}']
+        send('-l', '--', table[key], ';', 'send-keys', '-t', pane, 'Left',
+             ';', 'set-option', '-p', '-t', pane, EMPTY, '|' + '|'.join(places) + '|')
+        until(pane, cy, lambda b, a, x, y: x == now[2] and b + a != now[0] + now[1])
 
 
 def code(key):
@@ -105,8 +163,57 @@ def code(key):
     return chr(int(key[2:], 16)) if key.startswith('U+') else key
 
 
-def quoted(ch):
-    return '"%s"' % ch if ch == "'" else "'%s'" % ch
+def quoted(text):
+    """TEXT as one word of tmux's command language."""
+    return '"%s"' % text if "'" in text else "'%s'" % text
+
+
+def any_of(conditions):
+    """The format true when any of CONDITIONS is."""
+    out = conditions[0]
+    for c in conditions[1:]:
+        out = '#{||:%s,%s}' % (out, c)
+    return out
+
+
+def bindings(script, programs, table):
+    """The tmux commands (for source-file, where { } blocks nest) that bind
+    the pairs' characters and BSpace, and the keys they bind."""
+    gate = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(programs)
+    alnum = '#{m/r:^[[:alnum:]]$,#{cursor_character}}'
+    # Each character is compared through an option, as , and } cannot be
+    # written in a format.
+    def after(ch):
+        return '#{==:#{cursor_character},#{@electric-pair-%04X}}' % ord(ch)
+
+    def closed(ch):                             # dabbrev has just closed with it here
+        return '#{==:#{cursor_x} #{cursor_y} #{@electric-pair-%04X},#{@dabbrev-closed}}' % ord(ch)
+
+    codes = ','.join(f'{ord(o):04X}{ord(c):04X}' for o, c in table.items())
+
+    def run(key):                               # the pairs go with it, as codes
+        return 'run-shell ' + quoted(f'{script} key {key} #{{pane_id}} #{{cursor_x}} #{{cursor_y}} {codes} "#{{{EMPTY}}}"')
+
+    closers = list(dict.fromkeys(table.values()))
+    lines, keys = [], []
+    for ch in dict.fromkeys([*table, *closers]):
+        lines.append(f'set-option -g @electric-pair-{ord(ch):04X} {quoted(ch)}')
+        typed = f'send-keys -l {quoted(ch)}'
+        then = typed
+        if ch in table:                         # an opener (a quote too): it may pair
+            then = f'if-shell -F {quoted(alnum)} {{ {typed} }} {{ {run(f"U+{ord(ch):04X}")} }}'
+        if ch in closers:
+            then = (f'if-shell -F {quoted(after(ch))} {{ send-keys Right }} {{ '
+                    f'if-shell -F {quoted(closed(ch))} {{ set-option -pu @dabbrev-closed }} {{ {then} }} }}')
+        lines.append(f'bind-key -n {quoted(ch)} if-shell -F {quoted(gate)} {{ {then} }} {{ {typed} }}')
+        keys.append(ch)
+    if closers:
+        in_empty = '#{&&:%s,#{&&:%s,#{m:*|#{cursor_x}:#{cursor_y}|*,#{%s}}}}' % (
+            gate, any_of([after(c) for c in closers]), EMPTY)
+        lines.append(f'bind-key -n BSpace if-shell -F {quoted(in_empty)} '
+                     f'{{ {run("BSpace")} }} {{ send-keys BSpace }}')
+        keys.append('BSpace')
+    return lines, keys
 
 
 def bind():
@@ -115,27 +222,25 @@ def bind():
     script = os.path.abspath(__file__)
     programs = option(COMMANDS_OPTION, COMMANDS_DEFAULT).split()
     old = [code(k) for k in tmux('show-options', '-gqv', '@electric-pair-bound-keys').split()]
-    keys = []
-    if programs:
-        match = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(map(re.escape, programs))
-        table = pairs()
-        for ch in dict.fromkeys([*table, *table.values()]):
-            tmux('bind-key', '-n', ch, 'if-shell', '-F', match,
-                 f"run-shell \"{script} key U+{ord(ch):04X} '#{{pane_id}}'\"", f'send-keys -l {quoted(ch)}')
-            keys.append(ch)
-        tmux('bind-key', '-n', 'BSpace', 'if-shell', '-F', match,
-             f"run-shell \"{script} key BSpace '#{{pane_id}}'\"", 'send-keys BSpace')
-        keys.append('BSpace')
-    for k in old:
-        if k and k not in keys:
-            tmux('unbind-key', '-n', k, check=False)
-    tmux('set-option', '-g', '@electric-pair-bound-keys', ' '.join(f'U+{ord(k):04X}' if len(k) == 1 else k for k in keys))
+    lines, keys = bindings(script, programs, pairs()) if programs else ([], [])
+    lines += [f'unbind-key -n {quoted(k)}' for k in old if k not in keys]
+    lines.append('set-option -g @electric-pair-bound-keys ' +
+                 quoted(' '.join(f'U+{ord(k):04X}' if len(k) == 1 else k for k in keys)))
+    path = os.path.join(os.environ.get('TMPDIR', '/tmp'), f'tmux-electric-pair-{os.getpid()}.conf')
+    with open(path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    try:
+        tmux('source-file', path)
+    finally:
+        os.unlink(path)
 
 
 if __name__ == '__main__':
     if sys.argv[1:] == ['bind']:
         bind()
-    elif sys.argv[1:2] == ['key'] and len(sys.argv) == 4:
-        press(code(sys.argv[2]), sys.argv[3])
+    elif sys.argv[1:2] == ['key'] and len(sys.argv) == 8:
+        key, pane, cx, cy, codes, empty = sys.argv[2:]
+        table = {chr(int(c[:4], 16)): chr(int(c[4:], 16)) for c in codes.split(',') if c}
+        press(code(key), pane, int(cx), int(cy), table, empty)
     else:
-        sys.exit('usage: tmux-electric-pair bind | key KEY PANE')
+        sys.exit('usage: tmux-electric-pair bind | key KEY PANE X Y PAIRS EMPTY')

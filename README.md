@@ -76,7 +76,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | option | |
 |---|---|
 | `@dabbrev-key`, `@dabbrev-undo-key` | the keys [`M-/`, `M-?`] |
-| `@dabbrev-tab-commands` | programs in which Tab completes, by `#{pane_current_command}` [`claude codex pi node agy gemini`]; `''` leaves Tab alone |
+| `@dabbrev-tab-commands` | programs in which Tab completes, by `#{pane_current_command}`, each a regular expression for the whole name [`claude codex pi node agy gemini [0-9.]+`: Claude Code on macOS is named for its version]; `''` leaves Tab alone |
 | `@dabbrev-order` | the order of words that rank alike [`middle`: nearest the middle of the screen]; also `frequent`, `cursor`, `top` |
 | `@dabbrev-span-order` | the same for entities [`middle`] |
 | `@dabbrev-entities` | what counts as one thing on screen [`coloured camelcase capitalised`]: runs of text in a style of their own, CamelCase words, runs of Capitalised Words; `''` for none |
@@ -141,15 +141,23 @@ input, so it goes by what the screen shows either side of the cursor.
 | an opener `(` `[` `{` | types the pair, the cursor between: `(\|)`; not before a letter or digit, nor after `\` |
 | a quote `"` `'` `` ` `` | the same, and not after a letter or digit either (`don't`) |
 | a closer, or a quote, with the same right after the cursor | steps over it |
-| `BSpace` between an empty pair | takes both |
+| a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
+| `BSpace` in an empty pair it typed | takes both |
 
 | option | |
 |---|---|
 | `@electric-pair-pairs` | the pairs, two characters each [``` ()[]{}""''`` ```]; e.g. `'()[]{}""<>'` |
-| `@electric-pair-commands` | programs it works in, by `#{pane_current_command}` [`claude codex pi node agy gemini`]; `''` binds nothing |
+| `@electric-pair-commands` | programs it works in, as `@dabbrev-tab-commands` [the same]; `''` binds nothing |
 
 dabbrev's completions end against a closer already after the cursor, so
 `(` then `hel` + Tab gives `(hello)` with the cursor before the `)`.
+
+Typing stays quick: a closer, and Backspace but in an empty pair, are
+decided by tmux itself, with no process; an opener or quote that may pair,
+or Backspace in an empty pair, takes some 30–45 ms. Keys typed meanwhile
+wait, in order. An opener or quote goes in before its closer is decided, so
+keys typed just before it that the program has not shown yet do not mislead
+it (`don't` typed fast).
 
 ### quote-reply
 
