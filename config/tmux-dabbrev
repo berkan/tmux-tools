@@ -103,21 +103,22 @@ import unicodedata
 
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
-LINE_TYPED = re.compile(r"(?:^|(?<=\s))\^ ?\w[\w'./-]*$")      # ^word, ^ word
-NUMBER_TYPED = re.compile(r'(?:^|(?<=\s))\d+[.)]$')              # 2. 2)
+OPEN = r"""(?:^|(?<=[\s"'`(\[{<]))"""         # an anchor starts a word, or follows a quote or bracket
+LINE_TYPED = re.compile(OPEN + r"\^ ?\w[\w'./-]*$")               # ^word, ^ word
+NUMBER_TYPED = re.compile(OPEN + r'\d+[.)]$')                       # 2. 2)
 LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins a list item
-LIST_LEAD = re.compile(r'(?:^|\s)(?:[-*•+]|\d+[.)])\s$')         # - word
+LIST_LEAD = re.compile(OPEN + r'(?:[-*•+]|\d+[.)])\s$')           # - word
 SENTENCE_LEAD = re.compile(r'[.!?:]["\'’”)\]]*\s$')              # . word
 # ..word or ...word (a space between or none): up to the word; $ the line's
 # end, $$ the block's; . the sentence's (so "..." and "...." too), ? or ! the
 # next such mark.
 UPTO = r"\.\.\.? ?(\w[\w'./-]*|\$\$?|[.!?])"
-UPTO_TYPED = re.compile(r"(?:^|(?<=[\s\w]))" + UPTO + "$")            # after a space, or a word
+UPTO_TYPED = re.compile(r"""(?:^|(?<=[\s\w"'`(\[{<]))""" + UPTO + "$")   # also right after a word
 # An anchored query before it (^T..$$, ^The other..$$, -W ..cl): each match of
 # the query on screen (its first word anchored, the rest following it, each a
 # prefix), taken on to its first such end.
 QUERY = r"(?:\^ ?|[-.=])\w[\w'/-]*"
-QUERY_UPTO = re.compile(r"(?:^|(?<=\s))(?P<query>" + QUERY + r"(?: [\w'/-]+)*) ?(?P<op>" + UPTO + ")$")
+QUERY_UPTO = re.compile(OPEN + r"(?P<query>" + QUERY + r"(?: [\w'/-]+)*) ?(?P<op>" + UPTO + ")$")
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
@@ -630,7 +631,7 @@ class Screen:
         m = TYPED.search(pane.before)
         if m:
             lead = pane.before[:m.start()]
-            mark = re.search(r'(?:^|(?<=\s))[-.=]$', lead)
+            mark = re.search(OPEN + r'[-.=]$', lead)
             if mark:                                # -word, .word (MARKS), =word
                 return m.start() - 1, mark.group() + m.group()
             anchored = LIST_LEAD.search(lead) or SENTENCE_LEAD.search(lead)
@@ -666,22 +667,25 @@ class Screen:
             return sentences(pane, start, typed) or self.words(pane, start, typed)
         return self.words(pane, start, typed)
 
-    every = False                                   # words: each place, not each text once
-
     def query_up_to(self, pane, start, query, target):
         """The matches of QUERY (typed from START) at every place on screen:
-        its first word (with its anchor) as if the cursor were after it, the
-        rest the words that follow there, each a prefix (smart case); each
+        its first word where its anchor says (a line's start, a list item's,
+        a sentence's, an entity), the rest the words that follow there, each
+        a prefix (smart case), the word itself too; each
         taken on to its first end for TARGET (ends): one alternative a
         match, so M-/ goes on to the next."""
         head = re.match(QUERY, query).group()
         rest = query[len(head):].split()
+        word = re.sub(r'^(?:\^ ?|[-.=])', '', head)
+        # The mark stands for its word only: -F is a list item's first word,
+        # not the whole item, so -F.... ends at that word's sentence's end.
+        where = {'^': line_start, '-': list_item, '.': sentence_start, '=': None}[head[0]]
         before, pane.before = pane.before, pane.before[:start + len(head)]
-        Screen.every = True
         try:
-            alts = self.complete(pane, start, head)
+            alts = self.words(pane, start + len(head) - len(word), word, where,
+                              spans_only=head[0] == '=', every=True)
         finally:
-            pane.before, Screen.every = before, False
+            pane.before = before
         out, seen = [], set()
         for alt in alts:
             following, text = alt.get('following'), alt['text'].rstrip()
@@ -701,9 +705,9 @@ class Screen:
         return out
 
     @staticmethod
-    def words(pane, start, typed, where=None, spans_only=False):
+    def words(pane, start, typed, where=None, spans_only=False, every=False):
         return [{'text': text + ' ', 'following': following}
-                for text, following in candidates(pane, start, typed, where, spans_only, Screen.every)]
+                for text, following in candidates(pane, start, typed, where, spans_only, every)]
 
     def follow(self, pane, start, chosen):
         return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}

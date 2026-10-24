@@ -308,6 +308,12 @@ expect "=: a stretch in styles not the default is one, longer first at a place" 
 editor $'  \e[1mDoes \e[38;5;105mWhen\e[39m set up a listener?\e[0m Not quite. A \e[38;5;105mWhen\e[39m is'
 typed '=Wh'; dab tab
 expect "  ... the runs in it too" 'When ' "$(line)"
+QUOTED=('Thanks first.' 'Howdy partner' '- Which one' '' $'  \e[1mThe model\e[0m here' '' 'x')
+for t in 're: "=T|re: "The model ' 're: "^H|re: "Howdy ' 're: "-W|re: "Which one ' "('.th|('The model here " 're: "^T..$$|re: "The model here '; do
+    editor "${QUOTED[@]}"
+    typed "${t%%|*}"; dab tab
+    expect "after a quote or a bracket too: ${t%%|*}" "${t#*|}" "$(line)"
+done
 ENT=($'a \e[36mWhen\e[39m arrives' 'plain Whale and When' $'\e[34mWhen /someone/ wishes /p/\e[39m is it')
 editor "${ENT[@]}"
 typed '=wh'
@@ -396,6 +402,15 @@ typed '^T..$$'; dab tab expand
 expect "  ... M-/: the next block that starts so" 'Then later ' "$(line)"
 dab expand
 expect "  ... past the last: what was typed" '^T..$$' "$(line)"
+ITEM=('- First sentence here. And then' '  more of the item.' '- Second one' 'x')
+for q in '-F...' '-F....' '-F ...' '-F..here'; do
+    editor "${ITEM[@]}"
+    typed "$q"; dab tab
+    expect "${q}: in a query a mark stands for its word, not the whole item" 'First sentence here. ' "$(line)"
+done
+editor "${ITEM[@]}"
+typed '-F..$'; dab tab
+expect "  ... -F..\$: the item's first row" 'First sentence here. And then ' "$(line)"
 TWICE=('The model in four' '' 'The other direction: a' '  pattern here.' '' 'x')
 editor "${TWICE[@]}"
 typed '^T..$$'; dab tab
