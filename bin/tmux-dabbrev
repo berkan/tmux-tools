@@ -909,8 +909,8 @@ class Pipe:
     right after the cursor already, typed by electric-pair: ending against
     it). LEFT is the operator or chain right before the |, expanded (M-/
     cycles it); else a \\TEXT, as it is, words and all; else the one word
-    before it, as typed. With @dabbrev-pipe-completion on, right after a
-    completion (spaces between), LEFT is that completion, whole."""
+    before it, as typed. But right after a completion (spaces between), LEFT
+    is that completion, whole (@dabbrev-pipe-completion, on unless off)."""
     name = 'pipe'
 
     @staticmethod
@@ -942,8 +942,8 @@ class Pipe:
         """Where in the text before the cursor the completion the last press
         typed starts (with the opener it closed it after), when the | of M
         (spaces before it) follows it, the cursor left at its end; with
-        @dabbrev-pipe-completion on; else None."""
-        if tmux('show-options', '-gqv', PIPE_COMPLETION_OPTION).strip() != 'on':
+        @dabbrev-pipe-completion not off; else None."""
+        if tmux('show-options', '-gqv', PIPE_COMPLETION_OPTION).strip() == 'off':
             return None
         for end in range(m.start(), pane.before.index('|', m.start()) + 1):
             state = pane.state(before=pane.before[:end])

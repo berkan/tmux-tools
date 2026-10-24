@@ -212,17 +212,18 @@ OPTIONS['@tmux-tools-pairs'] = '()<>'
 expect('  ... the pairs from @tmux-tools-pairs', ['<hello>'], PIPED, 'hello |<')
 del OPTIONS['@tmux-tools-pairs']
 
-print('LEFT right after a completion: the whole completion (@dabbrev-pipe-completion on)')
+print('LEFT right after a completion: the whole completion (@dabbrev-pipe-completion, on by default)')
 def last(at, start, text, **more):
     """The state a completion of TEXT typed from START leaves, the text left of the cursor AT."""
     return {'start': start, 'at': '> ' + at, 'levels': [{'none': '_h', 'alts': [{'text': text, **more}], 'index': 0}]}
 HW = last('hello world ', 2, 'hello world ')
+OPTIONS['@dabbrev-pipe-completion'] = 'off'
 got = alternatives(PIPED, 'hello world |(', last=HW)
-check('off (the default): the word before the |', got == ['(world)'], got)
-OPTIONS['@dabbrev-pipe-completion'] = 'on'
+check('off: the word before the |', got == ['(world)'], got)
+del OPTIONS['@dabbrev-pipe-completion']
 OPTIONS['@dabbrev-snippets'] = SNIP
 got = alternatives(PIPED, 'hello world |(', last=HW)
-check('on: _h + Tab, then |( + Tab: the completion in the pair', got == ['(hello world)'], got)
+check('on (the default): _h + Tab, then |( + Tab: the completion in the pair', got == ['(hello world)'], got)
 got = alternatives(PIPED, 'hello world | ,r', last=HW)
 check('  ... and in a snippet', got == ['re: "hello world" -- '], got)
 got = alternatives(PIPED, '"hello world" |(', last=last('"hello world" ', 3, 'hello world ') | {'close': '"'})
@@ -231,7 +232,7 @@ got = alternatives(PIPED, 'hello world more |(', last=HW)
 check('  ... text typed after it: as before, the word', got == ['(more)'], got)
 got = alternatives(PIPED, 'hello world |(', last=last('hello world ', 2, 'hello world ', back=3))
 check('  ... a completion that left the cursor inside it: as before', got == ['(world)'], got)
-del OPTIONS['@dabbrev-pipe-completion'], OPTIONS['@dabbrev-snippets']
+del OPTIONS['@dabbrev-snippets']
 
 print('an opener before what is typed: the completion closed with its pair (@tmux-tools-pairs)')
 closes = lambda before: d.closer('> ' + before, len('> ' + before) - 3, Pane([], before).pairs())
