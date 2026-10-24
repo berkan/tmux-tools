@@ -142,10 +142,12 @@ expect "@dabbrev-entities applies here too (no camelcase)" "1 0" "$(in_mode) $(t
 tmux send -t "$PANE" -X cancel
 tmux set -gu @dabbrev-entities
 
-echo "the bindings' test for a selection (@has-selection in tmux.conf)"
+echo "bind: the copy-mode keys, and the test for a selection (@has-selection)"
 # Where jump-click lands a selection is begun; tmux 3.4 counts it as present
 # at once, 3.5 not until the cursor moves. Neither is a selection here.
-eval "tmux $(grep -E "^set -g @has-selection " "$HERE/../config/tmux.conf")"
+python3 "$LINK" bind
+expect "o Enter y r p in copy-mode-vi run it" 5 \
+    "$(tmux list-keys -T copy-mode-vi | grep -E 'copy-mode-vi +(o|Enter|y|r|p) ' | grep -c 'tmux-link')"
 selected() { tmux display -p -t "$PANE" '#{E:@has-selection}'; }
 prog 'some words here' 'more'
 at 0 2
@@ -175,8 +177,14 @@ at 0 5; VISUAL="$SCRATCH/editor" run open "$PANE" "$CLIENT"
 expect "a file: in \$VISUAL, in a popup" "$F" "$(opened)"
 at 0 19; VISUAL="$SCRATCH/editor" run open "$PANE" "$CLIENT"
 expect "a file not here: not opened" "" "$(opened)"
+tmux set -g @link-opener ''
 at 0 25; VISUAL="$SCRATCH/editor" run open "$PANE" "$CLIENT"
-expect "a web link: nothing opens it here, so it is copied" "https://example.com/x" "$(opened)$(tmux show-buffer)"
+expect "a web link with no opener (@link-opener ''): copied" "https://example.com/x" "$(opened)$(tmux show-buffer)"
+tmux send -t "$PANE" -X cancel
+tmux set -g @link-opener "$SCRATCH/editor"
+at 0 25; run open "$PANE" "$CLIENT"
+expect "  ... with one: opened by it" "https://example.com/x" "$(opened)"
+tmux set -gu @link-opener
 tmux send -t "$PANE" -X cancel
 prog 'nothing here' 'nor here'
 at 1 2
@@ -184,6 +192,15 @@ VISUAL="$SCRATCH/editor" run open "$PANE" "$CLIENT" cursor-up
 expect "off a link: the key's own command instead, from where the cursor was" "1 2 0" \
     "$(opened)$(in_mode) $(tmux display -p -t "$PANE" '#{copy_cursor_x} #{copy_cursor_y}')"
 TMUX_TMPDIR="$SCRATCH/o" tmux kill-server
+
+echo "without tmux-dabbrev beside it: links only"
+mkdir -p "$SCRATCH/alone"; cp "$LINK" "$SCRATCH/alone/tmux-link"
+prog $'see \e[36mabc-123:45\e[0m and '"$(link "$FURL" notes.md)"
+at 0 6; python3 "$SCRATCH/alone/tmux-link" copy "$PANE" '' cursor-up; sleep 0.2
+expect "an entity: the key's own command" "1 0" "$(in_mode) $(tmux display -p -t "$PANE" '#{copy_cursor_y}')"
+tmux send -t "$PANE" -X cancel
+at 0 21; python3 "$SCRATCH/alone/tmux-link" copy "$PANE"; sleep 0.2
+expect "  ... a link: as ever" "$F" "$(tmux show-buffer)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

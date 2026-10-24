@@ -7,7 +7,7 @@
 # in BACKENDS whose trigger matches the text before the cursor:
 #
 #   snippets      a word starting , (,rr): the snippets in the file named by
-#                 @dabbrev-snippets (default ~/.pi/agent/tmux-dabbrev.snippets)
+#                 @dabbrev-snippets (default ~/.config/tmux-dabbrev/snippets)
 #                 whose names start with the rest, by name; Tab needs a
 #                 letter of it, M-/ takes , alone (all of them). One a line:
 #                 NAME TEXT, # for a comment; in TEXT | is where the cursor
@@ -102,7 +102,7 @@ RUBY_OPTION = '@dabbrev-ruby-ranges'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPET_TYPED = re.compile(r'(?:^|(?<=\s)),([\w.-]*)$')
-SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.pi/agent/tmux-dabbrev.snippets'
+SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
 ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
@@ -527,11 +527,12 @@ def up_to(pane, start, word, exclusive=False):
 # item), for - . = with a letter or digit, so "--" and ". " are text. A mark
 # with nothing of its kind matching is text: the last word is completed as
 # any. Sugar: a mark that stands for an operator, % its argument (SUGARS; more
-# in @dabbrev-sugars, a file of MARK TEXT lines).
+# in the file named by @dabbrev-sugars, default ~/.config/tmux-dabbrev/sugars,
+# of MARK TEXT lines).
 
 KINDS = {'^': 'line', '-': 'item', '.': 'sentence', '=': 'entity'}
 SUGARS = {'_': '^%..$'}                         # the row that starts so
-SUGARS_OPTION, SUGARS_DEFAULT = '@dabbrev-sugars', '~/.pi/agent/tmux-dabbrev.sugars'
+SUGARS_OPTION, SUGARS_DEFAULT = '@dabbrev-sugars', '~/.config/tmux-dabbrev/sugars'
 DOTS_END = re.compile(r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?]|\^ ?\S.*|-(?:\w.*)?)$")
 NUMBER_END = re.compile(r'(?:^|(?<=\W))(\d+)[.)]$')
 

@@ -4,32 +4,37 @@
 # text shown. Claude Code links each file it names, showing a short path
 # (drafts/x.md) for the full one (file:///Users/me/notes/drafts/x.md); a
 # file link's target is its path. Off a link, copy, quote, paste and target
-# take the entity under the cursor whole, as dabbrev knows them (entities in
-# tmux-dabbrev, beside this script): a coloured span, a CamelCase word, a
-# run of Capitalised Words (the kinds in @dabbrev-entities); the longest that
-# holds the cursor.
+# take the entity under the cursor whole, as tmux-dabbrev knows them, when it
+# is beside this script (its entities: a coloured span, a CamelCase word, a
+# run of Capitalised Words, the kinds in @dabbrev-entities; the longest that
+# holds the cursor); without it, links only.
 #
-#   open    (links only) a file or folder: $VISUAL (else $EDITOR, else vi) in a popup on
-#           CLIENT; one not in this container: a message. Any other link:
-#           nothing in a container can open it (no browser), so it is
-#           copied, with a message.
+#   open    (links only) a file or folder: $VISUAL (else $EDITOR, else vi) in
+#           a popup on CLIENT; one not on this machine: a message. Any other
+#           link: the opener in @link-opener (unset: open, else xdg-open; ''
+#           none) opens it; with none, it is copied, with a message.
 #   copy    to tmux's buffer (and so the clipboard), leaving copy mode
-#   quote   re: "<target>" -- typed into PANE, as tmux-quote-reply does
+#   quote   re: "<target>" -- typed into PANE (as tmux-quote-reply does)
 #   paste   typed into PANE (bracketed paste), leaving copy mode
 #   target  printed
+#   quote-buffer   re: "<newest buffer>" -- typed into PANE
 #
 # Off a link, COMMAND (a copy-mode command such as other-end) is run instead,
-# so the key keeps its own meaning there. Bound in tmux.conf to o, Enter, y,
-# r and p in copy mode, when nothing is selected.
+# so the key keeps its own meaning there.
 #
-# The link is read off the screen (capture-pane -e). Before tmux 3.5 (the
-# containers have 3.4) copy mode keeps no links, so there the pane leaves
-# copy mode to be read, and off a link goes back into it, at the same place.
+# tmux-link bind — bind o, Enter, y, r and p in copy-mode-vi: with a selection
+# (more than the cursor's cell: @has-selection) as tmux's own (r quotes it),
+# else on the link or entity under the cursor. Run it from tmux.conf.
+#
+# The link is read off the screen (capture-pane -e). Before tmux 3.5 copy mode
+# keeps no links, so there the pane leaves copy mode to be read, and off a
+# link goes back into it, at the same place.
 import importlib.machinery
 import importlib.util
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import unicodedata
@@ -39,10 +44,21 @@ OSC8 = re.compile(r'\x1b\]8;[^;\x07\x1b]*;([^\x07\x1b]*)(?:\x07|\x1b\\)')
 ESCAPE = re.compile(r'\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
 
 
+OPENER_OPTION = '@link-opener'
+# More than the cursor's cell selected: where jump-click lands a selection is
+# begun, and tmux 3.4 counts it as present at once (3.5 not until the cursor
+# moves).
+HAS_SELECTION = ('#{&&:#{selection_present},#{||:#{!=:#{selection_start_x},#{selection_end_x}},'
+                 '#{!=:#{selection_start_y},#{selection_end_y}}}}')
+
+
 def dabbrev():
-    """tmux-dabbrev, beside this script, as a module (for its entities)."""
+    """tmux-dabbrev, beside this script, as a module (for its entities), or
+    None when it is not there."""
     sys.dont_write_bytecode = True              # no __pycache__ beside the scripts
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmux-dabbrev')
+    if not os.path.exists(path):
+        return None
     loader = importlib.machinery.SourceFileLoader('tmux_dabbrev', path)
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader(loader.name, loader))
     loader.exec_module(module)
@@ -123,6 +139,8 @@ def entity_at(line, cx):
     """The longest entity (dabbrev's) of LINE, as capture-pane -e gives it,
     that holds cell CX, or ''."""
     d = dabbrev()
+    if d is None:
+        return ''
     plain = ESCAPE.sub('', line)
     i = char_index(plain, cx)
     found = [(a, b) for a, b in d.entities(plain, line, d.entity_kinds()) if a <= i < b]
@@ -162,12 +180,26 @@ def copy(text):
         tmux('set-buffer', '--', text)
 
 
+def opener():
+    """The command that opens a link (@link-opener; unset: open, else
+    xdg-open, as found), as a list, or None."""
+    if tmux('show-options', '-gq', OPENER_OPTION).strip():
+        command = tmux('show-options', '-gqv', OPENER_OPTION).strip()
+        return shlex.split(command) if command else None
+    found = shutil.which('open') or shutil.which('xdg-open')
+    return [found] if found else None
+
+
 def open_(pane, client, text):
     if not text.startswith('/'):
-        copy(text)
-        tmux('display-message', '-c', client, f'Nothing here opens it (no browser); copied: {text}')
+        command = opener()
+        if command:
+            subprocess.Popen([*command, text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            copy(text)
+            tmux('display-message', '-c', client, f'Nothing opens links here (@link-opener); copied: {text}')
     elif not os.path.exists(text):
-        tmux('display-message', '-c', client, f'Not in this container: {text}')
+        tmux('display-message', '-c', client, f'Not on this machine: {text}')
     else:
         editor = shlex.split(os.environ.get('VISUAL') or os.environ.get('EDITOR') or 'vi')
         folder = text if os.path.isdir(text) else os.path.dirname(text)
@@ -175,7 +207,39 @@ def open_(pane, client, text):
              '-d', folder, shlex.join([*editor, text]))
 
 
-def main(action, pane, client=None, command=None):
+def quote(pane, text):
+    """re: "TEXT" -- typed into PANE, out of copy mode first."""
+    tmux('copy-mode', '-q', '-t', pane)
+    tmux('set-buffer', '-b', 'tmux-link', '--', f're: "{text}" -- ')
+    tmux('paste-buffer', '-p', '-d', '-b', 'tmux-link', '-t', pane)
+
+
+def bind():
+    """Bind o, Enter, y, r and p in copy-mode-vi (see above)."""
+    me = shlex.quote(os.path.abspath(__file__))
+    tmux('set-option', '-g', '@has-selection', HAS_SELECTION)
+    keys = {
+        'y': ('send-keys -X copy-selection-and-cancel', f"run-shell \"{me} copy '#{{pane_id}}' '' copy-selection-and-cancel\""),
+        'r': (f"send-keys -X copy-selection-and-cancel ; run-shell \"{me} quote-buffer '#{{pane_id}}'\"",
+              f"run-shell \"{me} quote '#{{pane_id}}'\""),
+        'p': ('send-keys -X copy-selection-and-cancel ; paste-buffer -p', f"run-shell \"{me} paste '#{{pane_id}}'\""),
+        'o': ('send-keys -X other-end', f"run-shell -b \"{me} open '#{{pane_id}}' '#{{client_name}}' other-end\""),
+        'Enter': ('send-keys -X copy-pipe-and-cancel',
+                  f"run-shell -b \"{me} open '#{{pane_id}}' '#{{client_name}}' copy-pipe-and-cancel\""),
+    }
+    for key, (selected, otherwise) in keys.items():
+        tmux('bind-key', '-T', 'copy-mode-vi', key, 'if-shell', '-F', '#{E:@has-selection}', selected, otherwise)
+
+
+def main(action, pane=None, client=None, command=None):
+    if action == 'bind':
+        bind()
+        return
+    if action == 'quote-buffer':
+        text = subprocess.run(['tmux', 'show-buffer'], text=True, stdout=subprocess.PIPE).stdout
+        if text:
+            quote(pane, text)
+        return
     link, entity = target(pane, keep_mode=action in ('target', 'open'))
     text = link if action == 'open' else link or entity
     if action == 'target':
@@ -193,8 +257,8 @@ def main(action, pane, client=None, command=None):
         tmux('set-buffer', '-b', 'tmux-link', '--', text)
         tmux('paste-buffer', '-p', '-d', '-b', 'tmux-link', '-t', pane)
     elif action == 'quote':
-        copy(text)                              # tmux-quote-reply quotes the newest buffer
-        subprocess.run([os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tmux-quote-reply'), pane])
+        copy(text)
+        quote(pane, text)
 
 
 if __name__ == '__main__':

@@ -6,11 +6,10 @@
 #
 # Highlight text first: Claude Code's own mouse selection and tmux copy mode
 # both copy into a tmux buffer. Bracketed paste (-p) keeps a multi-line quote
-# in the prompt unsubmitted. Bound to prefix r and the right-click menu in
-# tmux.conf; install.sh installs it to ~/.pi/agent/bin, which every container
-# shares, so it needs no image rebuild.
+# in the prompt unsubmitted. Bind it to a key, e.g.
+#   bind r run-shell "/path/to/tmux-quote-reply '#{pane_id}'"
 pane=${1:-$(tmux display -p '#{pane_id}')}
 sel=$(tmux show-buffer) || exit 0
 tmux copy-mode -q -t "$pane"              # leave copy/view mode if in it
-tmux set-buffer -b ppi-quote -- "re: \"$sel\" -- "
-tmux paste-buffer -p -d -b ppi-quote -t "$pane"
+tmux set-buffer -b tmux-quote-reply -- "re: \"$sel\" -- "
+tmux paste-buffer -p -d -b tmux-quote-reply -t "$pane"
