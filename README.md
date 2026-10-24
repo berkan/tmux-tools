@@ -90,6 +90,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
 | `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
 | `@dabbrev-spaced-marks` | the marks whose argument may also be one space after them, as `^ The` or `\ some text` [none]; for marks that do not come before a space in ordinary text, such as `'^_\'` (with `-` `.` `=` `,`, prose like `- item` would be read as an operator) |
+| `@dabbrev-pipe-completion` | `on`: right after a completion (`_h` + Tab, then `\|(` + Tab), the pipe's LEFT is that completion, whole: `(hello world)` [off: as below] |
 
 Entities come before words. A completion after an opening quote or bracket
 is closed with its pair (`"hel` → `"hello" `; the pairs of `@tmux-tools-pairs`).
@@ -256,7 +257,9 @@ between them ends the chain.
 none, at its end), the cursor after it all: `Snapshot | ,re` gives
 `re: "Snapshot" -- `. LEFT is the operator or chain right before the `|`,
 expanded (`^Sn | ,re`, `1. 2. | ,re`; `M-/` cycles it), or a `\text` (words
-and all), or else the one word before the `|`, as typed.
+and all), or else the one word before the `|`, as typed. With
+`@dabbrev-pipe-completion` on, right after a completion it is the completion,
+whole, with the quotes or brackets it was closed in.
 
 `LEFT |(` puts LEFT between a pair the same way: `hello |(` gives `(hello)`,
 `_Sn |"` the row in quotes, for each of `@tmux-tools-pairs`. When the closer is already after the cursor

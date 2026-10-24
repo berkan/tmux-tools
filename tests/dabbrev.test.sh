@@ -532,6 +532,16 @@ expect "  ... undo: back to what was typed" 'see hello |(|12' "$(line)|$(cursor)
 editor 'Snapshot of the state'
 typed 'see hello |()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab
 expect "  ... the closer after the cursor already: against it, the cursor before it" 'see (hello)|10' "$(line)|$(cursor)"
+editor 'hello world here'
+typed '_h'; dab tab; typed '|('; dab tab
+expect "  ... right after a completion: the word before the |" 'hello world (here)|18' "$(line)|$(cursor)"
+tmux set -g @dabbrev-pipe-completion on
+editor 'hello world here'
+typed '_h'; dab tab; typed '|('; dab tab
+expect "  ... @dabbrev-pipe-completion on: the whole completion" '(hello world here)|18' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo: back to what was typed" 'hello world here |(' "$(line)"
+tmux set -gu @dabbrev-pipe-completion
 editor "${CHAIN[@]}"
 typed '"1., 2.'; dab tab
 expect "  ... after a quote: the chain closed" '"1. First thing, 2. Second thing" ' "$(line)"

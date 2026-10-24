@@ -107,6 +107,7 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 # As Ruby's ranges (@dabbrev-ruby-ranges, on unless off): .. takes the end,
 # ... stops before it (...Then, .... a sentence without its full stop).
 RUBY_OPTION = '@dabbrev-ruby-ranges'
+PIPE_COMPLETION_OPTION = '@dabbrev-pipe-completion'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
@@ -908,7 +909,8 @@ class Pipe:
     right after the cursor already, typed by electric-pair: ending against
     it). LEFT is the operator or chain right before the |, expanded (M-/
     cycles it); else a \\TEXT, as it is, words and all; else the one word
-    before it, as typed."""
+    before it, as typed. With @dabbrev-pipe-completion on, right after a
+    completion (spaces between), LEFT is that completion, whole."""
     name = 'pipe'
 
     @staticmethod
@@ -929,8 +931,26 @@ class Pipe:
 
     def typed(self, pane, key):
         m = self.pattern(pane).search(pane.before)
-        left = self.left(pane, pane.before[:m.start()]) if m else None
+        if not m:
+            return None
+        start = self.completion(pane, m)
+        left = (start, 'completion') if start is not None else self.left(pane, pane.before[:m.start()])
         return (left[0], pane.before[left[0]:]) if left else None
+
+    @staticmethod
+    def completion(pane, m):
+        """Where in the text before the cursor the completion the last press
+        typed starts (with the opener it closed it after), when the | of M
+        (spaces before it) follows it, the cursor left at its end; with
+        @dabbrev-pipe-completion on; else None."""
+        if tmux('show-options', '-gqv', PIPE_COMPLETION_OPTION).strip() != 'on':
+            return None
+        for end in range(m.start(), pane.before.index('|', m.start()) + 1):
+            state = pane.state(before=pane.before[:end])
+            if state:
+                start = state['start'] - (1 if state.get('close') else 0)
+                return start if not shown(state)[1] and start < m.start() else None
+        return None
 
     @staticmethod
     def left(pane, text):
@@ -953,10 +973,13 @@ class Pipe:
         m = self.pattern(pane).search(typed)
         text = typed[:m.start()]
         into = self.into(pane, start, m.group(1))
-        left = self.left(pane, text)
+        completion = self.completion(pane, self.pattern(pane).search(pane.before)) == start
+        left = (0, 'completion') if completion else self.left(pane, text)
         if not into or not left or left[0]:
             return []
-        if left[1] == 'op':
+        if left[1] == 'completion':
+            values = [text]
+        elif left[1] == 'op':
             values = [alt['text'][:len(alt['text']) - alt.get('back', 0)].rstrip()
                       for alt in Screen().complete(pane.at(pane.before[:start] + text, ''), start, text)]
         else:
