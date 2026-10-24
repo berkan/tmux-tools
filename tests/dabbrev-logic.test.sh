@@ -141,6 +141,27 @@ expect('^The oth...^The: up to it', ['The other direction: a pattern here. Then 
 expect('-Which...-: up to the next item', ['Which one is wrapped on '], MD, '-Which...-')
 expect('-Which..-Wha: up to and with Whatever', ['Which one is wrapped on - Whatever '], MD, '-Which..-Wha')
 
+print('| : what is left of it into a snippet, at its |')
+PIPED = ['Snapshot of the state', 'The model here', 'Then more', '1. First thing', '2. Second thing']
+open(SNIP, 'w').write('rr  re: "|" --\\s\nend  tail\n')
+OPTIONS['@dabbrev-snippets'] = SNIP
+expect('Snapshot | ,r: a plain word as it is', ['re: "Snapshot" -- '], PIPED, 'Snapshot | ,r')
+expect('  ... only the one word before it', ['re: "Snapshot" -- '], PIPED, 'hello world Snapshot | ,r')
+expect('  ... spaces round | or none', ['re: "Snapshot" -- '], PIPED, 'Snapshot|,r')
+expect('^Sn | ,r: an operator, expanded', ['re: "Snapshot" -- '], PIPED, '^Sn | ,r')
+expect('_Sn | ,r: the row', ['re: "Snapshot of the state" -- '], PIPED, '_Sn | ,r')
+expect('\\\\hello world | ,r: text of several words', ['re: "hello world" -- '], PIPED, '\\hello world | ,r')
+expect('1. 2. | ,r: a chain, together', ['re: "1. First thing 2. Second thing" -- '], PIPED, '1. 2. | ,r')
+expect('^Th | ,r: M-/ cycles what is left of it', ['re: "The" -- ', 're: "Then" -- '], PIPED, '^Th | ,r', 'expand')
+expect('a snippet with no |: at its end', ['tailSnapshot'], PIPED, 'Snapshot | ,end')
+expect('an operator before it that takes nothing: the word before the |', ['-Wzz and then re: "Snapshot" -- '], PIPED, '-Wzz and then Snapshot | ,r')
+pane = Pane(PIPED, 'Snapshot | ,r')
+found = d.BACKENDS[0].typed(pane, 'tab')
+ok = found == (2, 'Snapshot | ,r')
+passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
+print('  ✓ it is the first backend, before the snippets' if ok else f'  ✗ first backend: {found}')
+del OPTIONS['@dabbrev-snippets']
+
 print('explain')
 pane = Pane(LISTS, '')
 lines = d.explain(pane, '1., -Wh')

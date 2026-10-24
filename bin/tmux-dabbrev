@@ -6,6 +6,9 @@
 # keys: Claude Code, pi, a shell. Completions come from a backend, the first
 # in BACKENDS whose trigger matches the text before the cursor:
 #
+#   pipe          ... | ,NAME: what is left of the | (an operator or chain,
+#                 expanded; a \TEXT; else the word before it) put in the
+#                 snippet NAME, where its | is (Pipe).
 #   snippets      a word starting , (,rr): the snippets in the file named by
 #                 @dabbrev-snippets (default ~/.config/tmux-dabbrev/snippets)
 #                 whose names start with the rest, by name; Tab needs a
@@ -856,6 +859,64 @@ class Snippets:
         return []
 
 
+PIPE = re.compile(r'\s*\|\s*(,\w+)$')                             # ... | ,name
+
+
+class Pipe:
+    """LEFT | ,NAME: LEFT's expansion put in the snippet NAME, where its | is
+    (none: at its end), the cursor after it all. LEFT is the operator or
+    chain right before the |, expanded (M-/ cycles it); else a \\TEXT, as it
+    is, words and all; else the one word before it, as typed."""
+    name = 'pipe'
+
+    def typed(self, pane, key):
+        m = PIPE.search(pane.before)
+        left = self.left(pane, pane.before[:m.start()]) if m else None
+        return (left[0], pane.before[left[0]:]) if left else None
+
+    @staticmethod
+    def left(pane, text):
+        """(start, kind) of what goes in the snippet, at the end of TEXT: an
+        operator or chain ('op'), a \\TEXT ('text'), a word ('word'); or None."""
+        marks = set(KINDS) | set(pane.sugars())
+        chain = parse_chain(text, marks)
+        unit = last_unit(text, marks)
+        if chain:
+            return chain[0], 'op'
+        if unit:
+            return unit['start'], 'op'
+        literal = [i for i in range(len(text)) if text[i] == '\\' and unit_starts(text, i, marks)]
+        if literal:
+            return literal[-1], 'text'
+        m = re.search(r'\S+$', text)
+        return (m.start(), 'word') if m else None
+
+    def complete(self, pane, start, typed):
+        m = PIPE.search(typed)
+        text = typed[:m.start()]
+        snippet = Snippets().complete(pane.at(pane.before[:start] + m.group(1), pane.after), start, m.group(1))
+        left = self.left(pane, text)
+        if not snippet or not left or left[0]:
+            return []
+        if left[1] == 'op':
+            values = [alt['text'][:len(alt['text']) - alt.get('back', 0)].rstrip()
+                      for alt in Screen().complete(pane.at(pane.before[:start] + text, ''), start, text)]
+        else:
+            values = [text[1:] if left[1] == 'text' else text]
+        keep = ''
+        if not any(values):                         # an operator that takes nothing: the word before it, as typed
+            word = re.search(r'\S+$', text)
+            if not word:
+                return []
+            keep, values = text[:word.start()], [word.group()]
+        body, back = snippet[0]['text'], snippet[0].get('back', 0)
+        cut = len(body) - back
+        return [{'text': keep + body[:cut] + value + body[cut:]} for value in dict.fromkeys(values) if value]
+
+    def follow(self, pane, start, chosen):
+        return []
+
+
 class Screen:
     """The words on the pane's screen."""
     name = 'screen'
@@ -1036,7 +1097,7 @@ class Paths:
         return '/' if os.path.isdir(os.path.join(pane.cwd(), os.path.expanduser(path))) else ' '
 
 
-BACKENDS = [Snippets(), Paths(), Program(), Screen()]
+BACKENDS = [Pipe(), Snippets(), Paths(), Program(), Screen()]
 BY_NAME = {backend.name: backend for backend in BACKENDS}
 
 
@@ -1258,6 +1319,13 @@ def explain(pane, text):
     units (a chain's, or the one), what is between them, and what each takes
     from the screen (the first few), then what Tab would type."""
     marks = set(KINDS) | set(pane.sugars())
+    piped = Pipe().typed(pane.at(text, ''), 'tab')
+    if piped:
+        m = PIPE.search(text)
+        left = Pipe.left(pane, text[:m.start()])
+        alts = Pipe().complete(pane.at(text, ''), *piped)
+        return [f'{text!r}: a pipe', f"  {text[piped[0]:m.start()]!r} ({left[1]}) into the snippet {m.group(1)[1:]!r}",
+                'Tab types: ' + (repr(alts[0]['text']) if alts else 'nothing (Tab goes to the program)')]
     chain = parse_chain(text, marks)
     unit = last_unit(text, marks)
     units = chain[1] if chain else [(unit['start'], len(text), '')] if unit else []

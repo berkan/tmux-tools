@@ -197,6 +197,7 @@ touches it.
 | `^T..$$` | from a line starting `T` to the end of its block (a blank line) |
 | `-F....` | from a list item starting `F` to the end of its sentence, without the full stop |
 | `,re` | the snippet `re` |
+| `_Sn \| ,re` | the row starting `Sn`, put in the snippet `re` |
 
 Ends after `..` (with the end) or `...` (up to it): a word, `$` (the line's
 end), `$$` (the block's), `.` (the sentence's), `?`, `!`, `^Wh` (the next line
@@ -207,6 +208,12 @@ Several in one press make a chain, joined by what you type between them
 puts the entity in the snippet's quotes. `\text` is text as it is, up to the
 next operator. All but the last take a one-word argument; a word of plain text
 between them ends the chain.
+
+`LEFT | ,name` puts LEFT into the snippet `name`, where its `|` is (with
+none, at its end), the cursor after it all: `Snapshot | ,re` gives
+`re: "Snapshot" -- `. LEFT is the operator or chain right before the `|`,
+expanded (`^Sn | ,re`, `1. 2. | ,re`; `M-/` cycles it), or a `\text` (words
+and all), or else the one word before the `|`, as typed.
 
 An operator with nothing on screen to match is text: its word completes as
 any (`^Howitzer`). `M-/` cycles the last operator's matches; `M-?` takes the

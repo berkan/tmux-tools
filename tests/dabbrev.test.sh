@@ -507,6 +507,17 @@ expect "  ... Tab goes on there" 're: "Does When set" -- |18' "$(line)|$(cursor)
 dab undo undo
 expect "  ... undo back to what was typed" ',r=Does|7' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-snippets
+printf 'rr  re: "|" --\\s\n' > "$SCRATCH/rr.snippets"
+tmux set -g @dabbrev-snippets "$SCRATCH/rr.snippets"
+editor 'Snapshot of the state' 'The model' 'Then more'
+typed 'see Snapshot | ,r'; dab tab
+expect "| : the word before it into the snippet, the cursor after it all" 'see re: "Snapshot" -- |22' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo: back to what was typed" 'see Snapshot | ,r|17' "$(line)|$(cursor)"
+editor 'Snapshot of the state' 'The model' 'Then more'
+typed '^Th | ,r'; dab tab expand
+expect "  ... ^Th | ,r, M-/: the next match in it" 're: "Then" -- ' "$(line)"
+tmux set -gu @dabbrev-snippets
 editor "${CHAIN[@]}"
 typed '"1., 2.'; dab tab
 expect "  ... after a quote: the chain closed" '"1. First thing, 2. Second thing" ' "$(line)"
