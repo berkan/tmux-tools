@@ -125,6 +125,12 @@ passed, failed = (passed + 1, failed) if expect_back == 5 else (passed, failed +
 print('  ✓' if expect_back == 5 else f'  ✗ (back {expect_back})', '  ... the cursor before the snippet\'s closing quote')
 del OPTIONS['@dabbrev-snippets']
 
+open(SNIP, 'w').write('re  re: "|" --\\s\nrr  re: "|" --\\s\nrs  rest\n')
+OPTIONS['@dabbrev-snippets'] = SNIP
+expect(',re: the snippet named re', ['re: "" -- '], LISTS, ',re')
+expect(',r: two names for one text are one alternative', ['re: "" -- ', 'rest'], LISTS, ',r', 'expand')
+del OPTIONS['@dabbrev-snippets']
+
 print('\\: literal text up to the next operator')
 expect('1. \\then 2.', ['1. First thing then 2. Second thing '], LISTS, '1. \\then 2.')
 expect('=Does \\and then -Wh', ['Does When and then Which one '], LISTS, '=Does \\and then -Wh')

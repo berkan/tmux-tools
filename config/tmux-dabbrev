@@ -843,9 +843,10 @@ class Snippets:
         return None
 
     def complete(self, pane, start, typed):
-        out = []
+        out, seen = [], set()
         for name, raw in sorted(snippets().items()):
-            if smartcase(typed[1:], name):
+            if smartcase(typed[1:], name) and raw not in seen:     # two names for one text: once
+                seen.add(raw)
                 text, back = snippet(raw)
                 out.append({'text': text, 'back': back})
         return out
