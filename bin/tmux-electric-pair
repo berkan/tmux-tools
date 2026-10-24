@@ -10,28 +10,33 @@
 #               has just closed its completion with it ("hello" |), is not
 #               typed again (once)
 #   BSpace      in an empty pair it typed, (|), takes both
+#   Tab         with a closer right after the cursor, steps over it: (hello|)
+#               to (hello)|; else does what it did before (dabbrev's
+#               completion). With @electric-pair-tab off, always the latter.
 # Anything else is typed as it is.
 #
 # The pairs are in the @electric-pair-pairs option, two characters each
 # [()[]{}""''``].
 #
-# tmux-electric-pair bind — bind each character of the pairs, and BSpace,
+# tmux-electric-pair bind — bind each character of the pairs, BSpace and Tab,
 # without the prefix, in the programs named in @electric-pair-commands (by
 # #{pane_current_command}, each a regular expression for the whole name, with
-# no , or }) [claude codex pi node agy gemini [0-9.]+ — Claude Code on macOS is
-# named for its version]; elsewhere the key goes on as it is. '' binds nothing. Run it from tmux.conf after setting
-# the options.
+# no , or }) [claude codex pi node agy gemini [0-9.]+ — Claude Code on macOS
+# is named for its version]; elsewhere the key goes on as it is. '' binds
+# nothing, and gives Tab back what it did. Run it from tmux.conf after setting
+# the options, and after whatever binds Tab (tmux-tools.tmux runs it last).
 #
 # For speed, the bindings decide what they can in tmux's formats, with no
 # process (the character after the cursor is #{cursor_character}): a closer,
-# BSpace but in an empty pair it typed, an opener before a letter or digit. The rest
-# needs the character before the cursor too: `tmux-electric-pair key KEY
-# PANE X Y PAIRS` reads the row and types KEY; after typing or taking a pair,
-# or stepping over, it waits (briefly) for the program to show its cursor
-# where that leaves it, so that the next key's formats read the screen as it
-# now is. The bindings run in the
-# foreground, so keys typed meanwhile wait and stay in order.
+# Tab, BSpace but in an empty pair it typed, an opener before a letter or
+# digit. The rest needs the character before the cursor too:
+# `tmux-electric-pair key KEY PANE X Y PAIRS EMPTY` reads the row and types
+# KEY; after typing or taking a pair, it waits (briefly) for the program to
+# show its cursor where that leaves it, so that the next key's formats read
+# the screen as it now is. The bindings run in the foreground, so keys typed
+# meanwhile wait and stay in order.
 import os
+import re
 import sys
 import time
 import unicodedata
@@ -99,6 +104,12 @@ def around(pane, cy, cx=None):
     return before, row[len(before):], x, y
 
 
+# Tab steps over a closer right after the cursor unless @electric-pair-tab is
+# off (read at each press); else it does what it did before, which is kept in
+# TAB_WAS (dabbrev's completion, say).
+TAB_ON = '#{!=:#{@electric-pair-tab},off}'
+TAB_WAS = '@electric-pair-tab-was'
+
 # The pane option holding the places (|X:Y|...) where it left an empty pair:
 # BSpace there may take both, elsewhere it is BSpace with no process.
 EMPTY = '@electric-pair-empty'
@@ -165,7 +176,9 @@ def code(key):
 
 def quoted(text):
     """TEXT as one word of tmux's command language."""
-    return '"%s"' % text if "'" in text else "'%s'" % text
+    if "'" not in text:
+        return "'%s'" % text
+    return '"%s"' % ''.join('\\' + c if c in '\\"$' else c for c in text)
 
 
 def any_of(conditions):
@@ -176,9 +189,10 @@ def any_of(conditions):
     return out
 
 
-def bindings(script, programs, table):
+def bindings(script, programs, table, tab):
     """The tmux commands (for source-file, where { } blocks nest) that bind
-    the pairs' characters and BSpace, and the keys they bind."""
+    the pairs' characters and BSpace, and Tab around TAB (what Tab did
+    before, a command; '' for none); and the keys they bind, but Tab."""
     gate = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(programs)
     alnum = '#{m/r:^[[:alnum:]]$,#{cursor_character}}'
     # Each character is compared through an option, as , and } cannot be
@@ -208,6 +222,8 @@ def bindings(script, programs, table):
         lines.append(f'bind-key -n {quoted(ch)} if-shell -F {quoted(gate)} {{ {then} }} {{ {typed} }}')
         keys.append(ch)
     if closers:
+        steps = '#{&&:%s,#{&&:%s,%s}}' % (TAB_ON, gate, any_of([after(c) for c in closers]))
+        lines.append(f'bind-key -n Tab if-shell -F {quoted(steps)} {{ send-keys Right }} {{ {tab or "send-keys Tab"} }}')
         in_empty = '#{&&:%s,#{&&:%s,#{m:*|#{cursor_x}:#{cursor_y}|*,#{%s}}}}' % (
             gate, any_of([after(c) for c in closers]), EMPTY)
         lines.append(f'bind-key -n BSpace if-shell -F {quoted(in_empty)} '
@@ -216,13 +232,29 @@ def bindings(script, programs, table):
     return lines, keys
 
 
+def tab_before():
+    """What Tab did before it was bound here: a command, or '' for none; and
+    whether it is bound here now."""
+    m = re.match(r'bind-key\s+(?:-r\s+)?-T\s+root\s+Tab\s+(.*)', tmux('list-keys', '-T', 'root', 'Tab'))
+    if m and TAB_ON in m.group(1):
+        return tmux('show-options', '-gqv', TAB_WAS).rstrip('\n'), True
+    return (m.group(1).strip() if m else ''), False
+
+
 def bind():
-    """Bind the pairs' characters and BSpace in the programs named in
-    @electric-pair-commands; unbind what was bound before and no longer is."""
+    """Bind the pairs' characters, BSpace and Tab in the programs named in
+    @electric-pair-commands; unbind what was bound before and no longer is,
+    and give Tab back what it did."""
     script = os.path.abspath(__file__)
     programs = option(COMMANDS_OPTION, COMMANDS_DEFAULT).split()
     old = [code(k) for k in tmux('show-options', '-gqv', '@electric-pair-bound-keys').split()]
-    lines, keys = bindings(script, programs, pairs()) if programs else ([], [])
+    table = pairs()
+    tab, ours = tab_before()
+    lines, keys = bindings(script, programs, table, tab) if programs else ([], [])
+    if programs and table:
+        lines.append(f'set-option -g {TAB_WAS} {quoted(tab)}')
+    elif ours:
+        lines.append(f'bind-key -n Tab {tab}' if tab else 'unbind-key -n Tab')
     lines += [f'unbind-key -n {quoted(k)}' for k in old if k not in keys]
     lines.append('set-option -g @electric-pair-bound-keys ' +
                  quoted(' '.join(f'U+{ord(k):04X}' if len(k) == 1 else k for k in keys)))
