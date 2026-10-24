@@ -47,6 +47,11 @@ expect "@tmux-tools '': none" '' "$(bound)"
 fresh
 bash "$ENTRY"
 expect "quote-reply binds nothing without @quote-reply-key" 'dabbrev link jump-click expand-region electric-pair ' "$(bound)"
+fresh
+tmux set -g @tmux-tools 'electric-pair dabbrev'
+bash "$ENTRY"
+expect "electric-pair binds last, so its Tab wraps dabbrev's whatever the order" 1 \
+    "$(tmux list-keys -T root Tab | grep -F 'electric-pair-tab' | grep -cF 'tmux-dabbrev tab')"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

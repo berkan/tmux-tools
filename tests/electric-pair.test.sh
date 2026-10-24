@@ -190,6 +190,42 @@ expect "  ... and on into the empty pair: both go" '|' "$(line)"
 editor; key '(' '(' BSpace BSpace
 expect "nested empty pairs, one after the other" '|' "$(line)"
 
+echo "Tab"
+# Tab as dabbrev binds it, here a stand-in that types T.
+tmux bind-key -n Tab send-keys -l T
+python3 "$EP" bind
+editor; key '(' h i Tab
+expect "with a closer after the cursor, Tab steps over it" '(hi)|' "$(line)"
+editor; key '"' h i Tab
+expect "  ... a quote too" '"hi"|' "$(line)"
+editor; key h i Tab
+expect "  ... else Tab does what it did" 'hiT|' "$(line)"
+tmux set -g @electric-pair-tab off
+editor; key '(' h i Tab
+expect "@electric-pair-tab off: Tab does what it did, closer or not" '(hiT|)' "$(line)"
+tmux set -gu @electric-pair-tab
+python3 "$EP" bind
+expect "binding again keeps the Tab it wraps once" 1 "$(tmux list-keys -T root Tab | grep -o 'send-keys -l T' | wc -l | tr -d ' ')"
+# As dabbrev's, a command with both kinds of quote in it.
+tmux bind-key -n Tab if-shell -F 1 "send-keys -l 'U'" 'send-keys -l "V"'
+was=$(tmux list-keys -T root Tab | sed 's/.*Tab *//')
+python3 "$EP" bind
+editor; key a Tab '(' Tab
+expect "  ... or the one bound since (dabbrev bound again)" 'aU()|' "$(line)"
+tmux set -g @electric-pair-commands ''
+python3 "$EP" bind
+expect "with nothing bound, Tab is as it was" "$was" "$(tmux list-keys -T root Tab | sed 's/.*Tab *//')"
+tmux set -g @electric-pair-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"
+tmux unbind-key -n Tab
+python3 "$EP" bind
+editor; key '(' Tab
+expect "with no Tab bound before, Tab still steps" '()|' "$(line)"
+tmux set -g @electric-pair-commands ''
+python3 "$EP" bind
+expect "  ... and is unbound again after" '' "$(tmux list-keys -T root Tab 2>/dev/null)"
+tmux set -g @electric-pair-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"
+python3 "$EP" bind
+
 echo "@tmux-tools-pairs"
 tmux set -g @tmux-tools-pairs '()'
 python3 "$EP" bind
@@ -206,10 +242,10 @@ tmux set -gu @tmux-tools-pairs
 echo "bind"
 bound() { tmux list-keys -T root | grep -F 'electric-pair' | awk '{print $4}' | sed 's/^\\//' | LC_ALL=C sort | tr '\n' ' '; }
 python3 "$EP" bind
-expect "binds the pairs and BSpace" "\" ' ( ) BSpace [ ] \` { } " "$(bound)"
+expect "binds the pairs, BSpace and Tab" "\" ' ( ) BSpace Tab [ ] \` { } " "$(bound)"
 tmux set -g @tmux-tools-pairs '()'
 python3 "$EP" bind
-expect "rebinding with fewer pairs unbinds the rest" '( ) BSpace ' "$(bound)"
+expect "rebinding with fewer pairs unbinds the rest" '( ) BSpace Tab ' "$(bound)"
 tmux set -g @electric-pair-commands ''
 python3 "$EP" bind
 expect "@electric-pair-commands '': nothing bound" '' "$(bound)"

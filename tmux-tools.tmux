@@ -11,6 +11,10 @@ if tmux show-options -gq @tmux-tools | grep -q .; then
 else
     tools='dabbrev link jump-click expand-region quote-reply electric-pair'
 fi
+# electric-pair last: its Tab wraps the Tab bound before it (dabbrev's).
+case " $tools " in
+    *' electric-pair '*) tools="$(printf '%s\n' $tools | grep -vx electric-pair | tr '\n' ' ') electric-pair" ;;
+esac
 for tool in $tools; do
     if [ -x "$DIR/bin/tmux-$tool" ]; then
         "$DIR/bin/tmux-$tool" bind

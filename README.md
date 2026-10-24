@@ -13,7 +13,7 @@ named.
 | `jump-click` | jump to any place on screen by keyboard; in a prompt the program's own cursor moves there |
 | `expand-region` | in copy mode, grow the selection to the next larger region (word, path, quotes, brackets, line, paragraph), like Emacs' expand-region |
 | `quote-reply` | paste the newest copy as `re: "…" -- `, to quote an answer back to an agent |
-| `electric-pair` | type brackets and quotes in pairs, like Emacs' `electric-pair-mode`: `(` gives `(\|)`, `)` steps over the one after the cursor, Backspace takes an empty pair |
+| `electric-pair` | type brackets and quotes in pairs, like Emacs' `electric-pair-mode`: `(` gives `(\|)`, `)` or Tab steps over the one after the cursor, Backspace takes an empty pair |
 
 ## Requirements
 
@@ -150,14 +150,19 @@ input, so it goes by what the screen shows either side of the cursor.
 | a closer, or a quote, with the same right after the cursor | steps over it |
 | a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
 | `BSpace` in an empty pair it typed | takes both |
+| `Tab` with a closer right after the cursor | steps over it: `(hello\|)` to `(hello)\|`; elsewhere Tab does what it did (dabbrev's completion) |
 
 | option | |
 |---|---|
 | `@tmux-tools-pairs` | the pairs (Shared, above) |
 | `@electric-pair-commands` | programs it works in, as `@dabbrev-tab-commands` [the same]; `''` binds nothing |
+| `@electric-pair-tab` | `off`: Tab before a closer completes too [on: it steps over]; read at each press, so `tmux set -g @electric-pair-tab off` applies at once |
 
-dabbrev's completions end against a closer already after the cursor, so
-`(` then `hel` + Tab gives `(hello)` with the cursor before the `)`.
+With Tab stepping over, `(hel|)` + Tab steps out rather than completing
+`hel`; `M-/` completes it. With it off, Tab completes there, ending against
+the closer, `(hello|)`, and Tab again adds the next word; `)` steps out.
+electric-pair binds Tab around whatever Tab was bound to, so
+`tmux-tools.tmux` binds it after the other tools.
 
 Typing stays quick: a closer, and Backspace but in an empty pair, are
 decided by tmux itself, with no process; an opener or quote that may pair,
