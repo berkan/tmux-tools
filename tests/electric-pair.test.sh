@@ -21,11 +21,12 @@ cleanup() {
     rm -rf "$SCRATCH"
 }
 trap cleanup EXIT
-# The bindings run a copy, so that it can be taken away to show which keys
-# need no process.
+# The bindings run a copy (with the lib/ it reads), so that it can be taken
+# away to show which keys need no process.
 EP="$SCRATCH/bin/tmux-electric-pair"
-mkdir -p "$SCRATCH/bin"
+mkdir -p "$SCRATCH/bin" "$SCRATCH/lib"
 cp "$HERE/../bin/tmux-electric-pair" "$EP"
+cp "$HERE/../lib/pairs.py" "$SCRATCH/lib/"
 
 pass=0
 fail=0
@@ -189,24 +190,24 @@ expect "  ... and on into the empty pair: both go" '|' "$(line)"
 editor; key '(' '(' BSpace BSpace
 expect "nested empty pairs, one after the other" '|' "$(line)"
 
-echo "@electric-pair-pairs"
-tmux set -g @electric-pair-pairs '()'
+echo "@tmux-tools-pairs"
+tmux set -g @tmux-tools-pairs '()'
 python3 "$EP" bind
 editor; key '"'
 expect "a character not in the pairs is typed as it is" '"|' "$(line)"
 editor; key '('
 expect "  ... those in them pair" '(|)' "$(line)"
-tmux set -g @electric-pair-pairs '<>'
+tmux set -g @tmux-tools-pairs '<>'
 python3 "$EP" bind
 editor; key '<' '>'
 expect "  ... any pair: <>" '<>|' "$(line)"
-tmux set -gu @electric-pair-pairs
+tmux set -gu @tmux-tools-pairs
 
 echo "bind"
 bound() { tmux list-keys -T root | grep -F 'electric-pair' | awk '{print $4}' | sed 's/^\\//' | LC_ALL=C sort | tr '\n' ' '; }
 python3 "$EP" bind
 expect "binds the pairs and BSpace" "\" ' ( ) BSpace [ ] \` { } " "$(bound)"
-tmux set -g @electric-pair-pairs '()'
+tmux set -g @tmux-tools-pairs '()'
 python3 "$EP" bind
 expect "rebinding with fewer pairs unbinds the rest" '( ) BSpace ' "$(bound)"
 tmux set -g @electric-pair-commands ''

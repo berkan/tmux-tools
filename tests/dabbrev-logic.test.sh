@@ -21,7 +21,13 @@ d = importlib.util.module_from_spec(importlib.util.spec_from_loader('dabbrev', l
 loader.exec_module(d)
 scratch = sys.argv[2]
 OPTIONS = {}                                    # the tmux options the script reads
-d.tmux = lambda *args, check=True: OPTIONS.get(args[-1], '') if args[:2] == ('show-options', '-gqv') else ''
+def tmux(*args, check=True):
+    if args[:2] == ('show-options', '-gqv'):
+        return OPTIONS.get(args[-1], '')
+    if args[:2] == ('show-options', '-gq'):                    # set or not
+        return f'{args[-1]} {OPTIONS[args[-1]]}\n' if args[-1] in OPTIONS else ''
+    return ''
+d.tmux = tmux
 
 
 class Pane(d.Pane):
@@ -189,7 +195,7 @@ got = alternatives(SPACED, '^  Th')
 check('one space only: ^ and two is text', 'Thorn ' in got, got)
 del OPTIONS['@dabbrev-spaced-marks'], OPTIONS['@dabbrev-snippets']
 
-print('LEFT |( : LEFT between a pair (@electric-pair-pairs)')
+print('LEFT |( : LEFT between a pair (@tmux-tools-pairs)')
 expect('hello |(: the word in the pair', ['(hello)'], PIPED, 'hello |(')
 expect('  ... spaces round | or none', ['(hello)'], PIPED, 'hello|(')
 expect('  ... a quote', ['"hello"'], PIPED, 'hello |"')
@@ -200,13 +206,18 @@ got = alternatives(PIPED, 'hello |(', after=')')
 check('  ... the closer after the cursor already (electric-pair typed it): ended against it', got == ['(hello'], got)
 got = alternatives(PIPED, 'hello |<')
 check('  ... not a pair: no surround', not got or '<hello>' not in got, got)
-OPTIONS['@electric-pair-pairs'] = '()<>'
-expect('  ... the pairs from @electric-pair-pairs', ['<hello>'], PIPED, 'hello |<')
-del OPTIONS['@electric-pair-pairs']
-loader = importlib.machinery.SourceFileLoader('pair', os.path.join(os.path.dirname(sys.argv[1]), 'tmux-electric-pair'))
-pair = importlib.util.module_from_spec(importlib.util.spec_from_loader('pair', loader))
-loader.exec_module(pair)
-check('  ... the default pairs are electric-pair\'s', d.PAIRS_DEFAULT == pair.PAIRS_DEFAULT, d.PAIRS_DEFAULT)
+OPTIONS['@tmux-tools-pairs'] = '()<>'
+expect('  ... the pairs from @tmux-tools-pairs', ['<hello>'], PIPED, 'hello |<')
+del OPTIONS['@tmux-tools-pairs']
+
+print('an opener before what is typed: the completion closed with its pair (@tmux-tools-pairs)')
+closes = lambda before: d.closer('> ' + before, len('> ' + before) - 3, Pane([], before).pairs())
+check('("hel: closed with "', closes('("hel') == '"', closes('("hel'))
+check('<hel: < is not one of the pairs by default', closes('<hel') == '', closes('<hel'))
+OPTIONS['@tmux-tools-pairs'] = '()<>'
+check('  ... it is when the pairs have it', closes('<hel') == '>', closes('<hel'))
+check('  ... and " is not, when they do not', closes('"hel') == '', closes('"hel'))
+del OPTIONS['@tmux-tools-pairs']
 
 print('explain')
 pane = Pane(LISTS, '')

@@ -85,6 +85,12 @@ t copy-mode -t "$PANE"
 at 0 24
 expect "  ... and a call in brackets" 'f|f(x)' "$(steps expand expand)"
 
+show 'see <a b> here'
+at 0 5
+t set -g @tmux-tools-pairs '()<>'
+expect "the brackets are the pairs of @tmux-tools-pairs" 'a|a b|<a b>' "$(steps expand expand expand)"
+t set -gu @tmux-tools-pairs
+
 show 'call(' '    first,' '    second)' 'after'
 at 1 5
 expect "brackets across rows" \

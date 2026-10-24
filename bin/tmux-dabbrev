@@ -9,7 +9,7 @@
 #   pipe          ... | ,NAME: what is left of the | (an operator or chain,
 #                 expanded; a \TEXT; else the word before it) put in the
 #                 snippet NAME, where its | is; ... |( between the pair, for
-#                 each pair of @electric-pair-pairs (Pipe).
+#                 each pair of @tmux-tools-pairs (Pipe).
 #   snippets      a word starting , (,rr): the snippets in the file named by
 #                 @dabbrev-snippets (default ~/.config/tmux-dabbrev/snippets)
 #                 whose names start with the rest, by name; Tab needs a
@@ -98,6 +98,9 @@ import tempfile
 import time
 import unicodedata
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
+import pairs                                    # lib/pairs.py: the pairs the tools share
+
 WORD = re.compile(r"\w(?:[\w'./-]*\w)?")       # inside: ' . / - (paths, don't)
 TYPED = re.compile(r"\w[\w'./-]*$")
 LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins a list item
@@ -107,7 +110,6 @@ RUBY_OPTION = '@dabbrev-ruby-ranges'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
-PAIRS_OPTION, PAIRS_DEFAULT = '@electric-pair-pairs', '()[]{}""' "''" '``'   # electric-pair's, for LEFT |(
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
 ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
@@ -791,16 +793,16 @@ def anchored(pane, start, unit):
 
 
 # An opening quote or bracket right before what was typed (at a word's start):
-# the completion is closed with its pair, the closer moving on with it.
-CLOSERS = {'"': '"', "'": "'", '`': '`', '(': ')', '[': ']', '{': '}', '<': '>', '“': '”', '‘': '’'}
+# the completion is closed with its pair (@tmux-tools-pairs), the closer
+# moving on with it.
 
 
-def closer(before, start):
-    """The closer for the opener just before START in BEFORE, or ''. (One
-    already right after the cursor is not added: see start.)"""
+def closer(before, start, pairs):
+    """The closer in PAIRS for the opener just before START in BEFORE, or ''.
+    (One already right after the cursor is not added: see start.)"""
     opener = before[start - 1:start] if start else ''
-    if opener in CLOSERS and (start == 1 or before[start - 2].isspace() or before[start - 2] in CLOSERS):
-        return CLOSERS[opener]
+    if opener in pairs and (start == 1 or before[start - 2].isspace() or before[start - 2] in pairs):
+        return pairs[opener]
     return ''
 
 
@@ -808,7 +810,7 @@ def shown(state):
     """(text, back): the text the completion puts in place of what was typed,
     the cursor BACK characters before its end: the chosen alternative of the
     last level, or with none chosen, the level's own (what was typed, or what
-    the level goes on from); closed (CLOSERS) when the state says so, unless
+    the level goes on from); closed (closer) when the state says so, unless
     it holds the closer already."""
     level = state['levels'][-1]
     if level['index'] < len(level['alts']):
@@ -902,7 +904,7 @@ class Snippets:
 class Pipe:
     """LEFT | ,NAME: LEFT's expansion put in the snippet NAME, where its | is
     (none: at its end), the cursor after it all; LEFT |( (an opener of
-    @electric-pair-pairs): between the pair, the same way (with the closer
+    @tmux-tools-pairs): between the pair, the same way (with the closer
     right after the cursor already, typed by electric-pair: ending against
     it). LEFT is the operator or chain right before the |, expanded (M-/
     cycles it); else a \\TEXT, as it is, words and all; else the one word
@@ -1027,7 +1029,7 @@ class Screen:
             text = typed[a:b]
             view = pane.at(pane.before[:start] + prefix + text, suffix + pane.after)
             ustart = start + len(prefix)
-            close = closer(view.before, ustart) if n and not text.startswith(',') else ''
+            close = closer(view.before, ustart, pane.pairs()) if n and not text.startswith(',') else ''
             tight = bool(close) and view.after.startswith(close)
             alts = self.unit_alts(view, ustart, text)
             if n == len(units) - 1:
@@ -1187,12 +1189,8 @@ class Pane:
         return self._sugars
 
     def pairs(self):
-        """{opener: closer} from @electric-pair-pairs, as electric-pair has them."""
         if self._pairs is None:
-            text = tmux('show-options', '-gqv', PAIRS_OPTION).rstrip('\n')
-            if text == '' and not tmux('show-options', '-gq', PAIRS_OPTION):
-                text = PAIRS_DEFAULT
-            self._pairs = {text[i]: text[i + 1] for i in range(0, len(text) - 1, 2)}
+            self._pairs = pairs.pairs(tmux)
         return self._pairs
 
     def marks(self):
@@ -1318,7 +1316,7 @@ def start(pane, key):
         alts = backend.go_on(pane, *found)
     if not alts:
         return False
-    close = closer(pane.before, found[0]) if backend.name != 'snippets' else ''
+    close = closer(pane.before, found[0], pane.pairs()) if backend.name != 'snippets' else ''
     tight = bool(close) and pane.after.startswith(close)     # it is there already (,rr's "|")
     state = {'backend': backend.name, 'start': found[0],
              'close': '' if tight else close, 'tight': tight,

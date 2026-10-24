@@ -12,8 +12,8 @@
 #   BSpace      in an empty pair it typed, (|), takes both
 # Anything else is typed as it is.
 #
-# The pairs are in the @electric-pair-pairs option, two characters each
-# [()[]{}""''``].
+# The pairs are the tools' shared ones (lib/pairs.py): the @tmux-tools-pairs
+# option, two characters each [()[]{}""''``].
 #
 # tmux-electric-pair bind — bind each character of the pairs, and BSpace,
 # without the prefix, in the programs named in @electric-pair-commands (by
@@ -36,7 +36,6 @@ import sys
 import time
 import unicodedata
 
-PAIRS_OPTION, PAIRS_DEFAULT = '@electric-pair-pairs', '()[]{}""' "''" '``'
 # Claude Code on macOS is named for its version (2.1.310).
 COMMANDS_OPTION, COMMANDS_DEFAULT = '@electric-pair-commands', r'claude codex pi node agy gemini [0-9.]+'
 
@@ -63,12 +62,6 @@ def option(name, default):
     if not tmux('show-options', '-gq', name):
         return default
     return tmux('show-options', '-gqv', name).rstrip('\n')
-
-
-def pairs():
-    """{opener: closer} from @electric-pair-pairs."""
-    text = option(PAIRS_OPTION, PAIRS_DEFAULT)
-    return {text[i]: text[i + 1] for i in range(0, len(text) - 1, 2)}
 
 
 def cell_width(ch):
@@ -222,7 +215,9 @@ def bind():
     script = os.path.abspath(__file__)
     programs = option(COMMANDS_OPTION, COMMANDS_DEFAULT).split()
     old = [code(k) for k in tmux('show-options', '-gqv', '@electric-pair-bound-keys').split()]
-    lines, keys = bindings(script, programs, pairs()) if programs else ([], [])
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
+    import pairs                                # lib/pairs.py; here, as a key press needs none of it
+    lines, keys = bindings(script, programs, pairs.pairs(tmux)) if programs else ([], [])
     lines += [f'unbind-key -n {quoted(k)}' for k in old if k not in keys]
     lines.append('set-option -g @electric-pair-bound-keys ' +
                  quoted(' '.join(f'U+{ord(k):04X}' if len(k) == 1 else k for k in keys)))

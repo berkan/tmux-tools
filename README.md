@@ -65,6 +65,12 @@ without it, `link` acts on links only.
 
 Each option is a tmux option, set with `set -g`. Defaults in brackets.
 
+### Shared
+
+| option | |
+|---|---|
+| `@tmux-tools-pairs` | the pairs of brackets and quotes, two characters each [``` ()[]{}""''`` ```]; e.g. ``` '()[]{}""''``<>' ```. electric-pair types them in pairs; dabbrev closes a completion typed after an opener with its pair, and puts `LEFT \|(` between one; expand-region takes the brackets among them (pairs of two different characters) as regions |
+
 ### dabbrev
 
 | key | does |
@@ -86,7 +92,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-spaced-marks` | the marks whose argument may also be one space after them, as `^ The` or `\ some text` [none]; for marks that do not come before a space in ordinary text, such as `'^_\'` (with `-` `.` `=` `,`, prose like `- item` would be read as an operator) |
 
 Entities come before words. A completion after an opening quote or bracket
-is closed with its pair (`"hel` → `"hello" `).
+is closed with its pair (`"hel` → `"hello" `; the pairs of `@tmux-tools-pairs`).
 
 ### link
 
@@ -147,7 +153,7 @@ input, so it goes by what the screen shows either side of the cursor.
 
 | option | |
 |---|---|
-| `@electric-pair-pairs` | the pairs, two characters each [``` ()[]{}""''`` ```]; e.g. `'()[]{}""<>'` |
+| `@tmux-tools-pairs` | the pairs (Shared, above) |
 | `@electric-pair-commands` | programs it works in, as `@dabbrev-tab-commands` [the same]; `''` binds nothing |
 
 dabbrev's completions end against a closer already after the cursor, so
@@ -229,7 +235,7 @@ touches it (or is one space after it, for the marks in
 | `-F....` | from a list item starting `F` to the end of its sentence, without the full stop |
 | `,re` | the snippet `re` |
 | `_Sn \| ,re` | the row starting `Sn`, put in the snippet `re` |
-| `hello \|(` | `(hello)`: between the pair, for each pair of electric-pair |
+| `hello \|(` | `(hello)`: between the pair, for each of `@tmux-tools-pairs` |
 
 Ends after `..` (with the end) or `...` (up to it): a word, `$` (the line's
 end), `$$` (the block's), `.` (the sentence's), `?`, `!`, `^Wh` (the next line
@@ -248,8 +254,7 @@ expanded (`^Sn | ,re`, `1. 2. | ,re`; `M-/` cycles it), or a `\text` (words
 and all), or else the one word before the `|`, as typed.
 
 `LEFT |(` puts LEFT between a pair the same way: `hello |(` gives `(hello)`,
-`_Sn |"` the row in quotes. The pairs are electric-pair's
-(`@electric-pair-pairs`). When the closer is already after the cursor
+`_Sn |"` the row in quotes, for each of `@tmux-tools-pairs`. When the closer is already after the cursor
 (electric-pair typed it with the opener), the text ends against it, the
 cursor before it, so typing the closer steps over it.
 

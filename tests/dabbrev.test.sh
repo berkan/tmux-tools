@@ -541,6 +541,19 @@ editor 'say hello world here'
 typed 'x "hel'; dab tab
 expect "the closer after it" 'x "hello" ' "$(line)"
 closed() { tmux show-options -pqv -t "$PANE" @dabbrev-closed; }
+editor 'say hello world here'
+typed 'x <hel'; dab tab
+expect "  ... < is not one of the pairs by default: not closed" 'x <hello ' "$(line)"
+editor 'say hello world here'
+typed 'x “hel'; dab tab
+expect "  ... nor “" 'x “hello ' "$(line)"
+tmux set -g @tmux-tools-pairs '()<>'
+editor 'say hello world here'
+typed 'x <hel'; dab tab
+expect "  ... closed when @tmux-tools-pairs has it" 'x <hello> ' "$(line)"
+tmux set -gu @tmux-tools-pairs
+editor 'say hello world here'
+typed 'x "hel'; dab tab
 expect "  ... where it ends and the closer, in @dabbrev-closed (for electric-pair)" "12 $ROW \"" "$(closed)"
 dab tab
 expect "  ... and on after the words Tab adds" 'x "hello world" ' "$(line)"
@@ -553,7 +566,7 @@ expect "  ... @dabbrev-closed gone" '' "$(closed)"
 editor 'say hello world here'
 typed '"hello'; dab tab
 expect "  ... a whole word: on to the next, closed" '"hello world" ' "$(line)"
-for t in '(hel|(hello) ' '[hel|[hello] ' "'hel|'hello' " '`hel|`hello` ' '“hel|“hello” '; do
+for t in '(hel|(hello) ' '[hel|[hello] ' "'hel|'hello' " '`hel|`hello` '; do
     editor 'say hello world here'
     typed "${t%%|*}"; dab tab
     expect "  ... ${t%%|*}" "${t#*|}" "$(line)"

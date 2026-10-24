@@ -28,7 +28,9 @@ import subprocess
 import sys
 import unicodedata
 
-OPENERS, CLOSERS = '([{', ')]}'
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
+import pairs                                    # lib/pairs.py: the pairs the tools share
+
 RULES_FILE = '~/.config/tmux-expand-region/rules'
 DEFAULT_RULES = r"""
 word       regex    [^\W_]+
@@ -120,6 +122,18 @@ def indent(line):
     return len(line) - len(line.lstrip())
 
 
+_brackets = None
+
+
+def brackets():
+    """{opener: closer} of the brackets: the pairs (@tmux-tools-pairs) of two
+    different characters (the quotes are rules of their own)."""
+    global _brackets
+    if _brackets is None:
+        _brackets = {o: c for o, c in pairs.pairs(tmux).items() if o != c}
+    return _brackets
+
+
 def pairs_in(text, p):
     """(open, close) of each bracket pair, skipping brackets inside strings
     other than one that holds P."""
@@ -131,9 +145,9 @@ def pairs_in(text, p):
     for k, ch in enumerate(text):
         if inside[k]:
             continue
-        if ch in OPENERS:
+        if ch in brackets():
             stack.append(k)
-        elif ch in CLOSERS and stack and text[stack[-1]] == OPENERS[CLOSERS.index(ch)]:
+        elif stack and ch == brackets()[text[stack[-1]]]:
             found.append((stack.pop(), k))
     return found
 
