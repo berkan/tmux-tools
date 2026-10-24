@@ -563,7 +563,13 @@ typed 'sw'; dab expand
 expect "  ... punctuation at its end is not part of it" 'swiz ' "$(line)"
 editor $'\e[2mgrey all over\e[0m'
 typed 'gr'; dab expand expand
-expect "a whole coloured line is no span" 'gr' "$(line)"
+expect "a whole faint line is no span" 'gr' "$(line)"
+editor $'\e[48;5;189mbg all over\e[0m'
+typed 'bg'; dab expand expand
+expect "  ... nor one with a background (a diff's)" 'bg' "$(line)"
+editor 'the more' '' $'  \e[1m\e[48;5;189mThe model in four sentences\e[0m' '' 'x'
+typed '=T'; dab tab
+expect "  ... but a whole bold line is, background or not (a heading)" 'The model in four sentences ' "$(line)"
 editor $'\e[31mred\e[0m'
 typed 'r'; dab expand
 expect "  ... nor is the word it is" 'red ' "$(line)"

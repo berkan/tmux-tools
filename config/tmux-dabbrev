@@ -244,7 +244,8 @@ def spans(plain, escaped):
     more than one of them (**Does `When` set up?**: the bold sentence and its
     coloured word); trimmed of spaces and of , : ; at the end (**swiz:**).
     ESCAPED is the line with its escapes. Not a run that is all the line's
-    text, as a diff line or a grey one is."""
+    text and faint, or on a background but not bold, as a grey line or a
+    diff's is (a bold heading is a span, on a background or not)."""
     cells = styled(escaped)
     if ''.join(ch for ch, _ in cells).rstrip() != plain.rstrip():
         return []                               # the screen changed between the captures
@@ -263,7 +264,11 @@ def spans(plain, escaped):
     for i, j in runs(lambda x, y: x == y) + runs(lambda x, y: (x == DEFAULT) == (y == DEFAULT)):
         text = plain[i:j]
         a, b = i + len(text) - len(text.lstrip()), i + len(text.rstrip().rstrip(',:;'))
-        if b - a >= 2 and plain[a:b] != plain.strip() and (a, b) not in out:
+        whole = plain[a:b] == plain.strip()
+        if whole and any(2 in style[2] or (style[1] is not None and 1 not in style[2])
+                         for _, style in cells[i:j]):
+            continue
+        if b - a >= 2 and (a, b) not in out:
             out.append((a, b))
     return out
 
