@@ -21,7 +21,10 @@ d = importlib.util.module_from_spec(importlib.util.spec_from_loader('dabbrev', l
 loader.exec_module(d)
 scratch = sys.argv[2]
 OPTIONS = {}                                    # the tmux options the script reads
+SHOWN = []                                      # what it showed in the status line
 def tmux(*args, check=True):
+    if args[0] == 'display-message' and '-p' not in args:
+        SHOWN.append(args[-1])
     if args[:2] == ('show-options', '-gqv'):
         return OPTIONS.get(args[-1], '')
     if args[:2] == ('show-options', '-gq'):                    # set or not
@@ -164,8 +167,9 @@ expect('^Th | ,r: M-/ cycles what is left of it', ['re: "The" -- ', 're: "Then" 
 expect('a snippet with no |: at its end', ['tailSnapshot'], PIPED, 'Snapshot | ,end')
 expect('an operator before it that takes nothing: the word before the |', ['-Wzz and then re: "Snapshot" -- '], PIPED, '-Wzz and then Snapshot | ,r')
 pane = Pane(PIPED, 'Snapshot | ,r')
-found = d.BACKENDS[0].typed(pane, 'tab')
-ok = found == (2, 'Snapshot | ,r')
+found = d.BY_NAME['pipe'].typed(pane, 'tab')
+names = [b.name for b in d.BACKENDS]
+ok = found == (2, 'Snapshot | ,r') and names.index('pipe') < names.index('snippets')
 passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
 print('  ✓ it is the first backend, before the snippets' if ok else f'  ✗ first backend: {found}')
 del OPTIONS['@dabbrev-snippets']
@@ -242,6 +246,55 @@ OPTIONS['@tmux-tools-pairs'] = '()<>'
 check('  ... it is when the pairs have it', closes('<hel') == '>', closes('<hel'))
 check('  ... and " is not, when they do not', closes('"hel') == '', closes('"hel'))
 del OPTIONS['@tmux-tools-pairs']
+
+print('`code` + Tab: what the code prints, in place of it')
+import time
+def not_run(name, before, key='tab'):
+    taken = d.Eval().typed(Pane([], before), key)
+    check(name, taken is None, taken)
+expect('`echo hi`: run by sh', ['hi'], [], '`echo hi`')
+expect('  ... after other text', ['say hi'], [], 'say `echo say hi`')
+expect('  ... its output whole, but the line breaks at its end', ['a\nb'], [], "`printf 'a\\nb\\n\\n'`")
+expect('  ... without its escape sequences (colour)', ['red'], [], "`printf '\\033[31mred\\033[0m'`")
+expect("  ... in the pane's folder", ['/'], [], '`pwd`')
+expect('`sh echo hi`: sh named', ['hi'], [], '`sh echo hi`')
+expect('`py 2**10`: python', ['1024'], [], '`py 2**10`')
+expect('`js 1+2`: node', ['3'], [], '`js 1+2`')
+not_run('M-/ does not run it', '`echo hi`', key='expand')
+not_run('`` (nothing inside): not code', '``')
+not_run('```echo hi```: not code', '```echo hi```')
+not_run('x`echo hi`: not after a letter', 'x`echo hi`')
+SHOWN.clear()
+expect('a failure: nothing', [], [], '`echo oops >&2; exit 3`')
+check('  ... its error shown', any('oops' in m for m in SHOWN), SHOWN)
+SHOWN.clear()
+expect('  ... a program that is not there', [], [], '`no-such-program-here`')
+check('  ... said so', any('not found' in m for m in SHOWN), SHOWN)
+OPTIONS['@dabbrev-eval-timeout'] = '0.5'
+SHOWN.clear()
+t = time.monotonic()
+expect('@dabbrev-eval-timeout 0.5: sleep 30 stopped', [], [], '`sleep 30 & sleep 30`')
+check('  ... at once, its children too', time.monotonic() - t < 2, time.monotonic() - t)
+check('  ... and said so', any('0.5' in m for m in SHOWN), SHOWN)
+del OPTIONS['@dabbrev-eval-timeout']
+ENGINES = os.path.join(scratch, 'engines')
+with open(ENGINES, 'w') as f:
+    f.write('# NAME  COMMAND\n'
+            'up      tr a-z A-Z\n'
+            'rev     python3 -c "import sys; print(sys.argv[1][::-1])" {}\n'
+            'js      echo JS {}\n')
+OPTIONS['@dabbrev-engines'] = ENGINES
+expect('@dabbrev-engines: one with no {}: the code on its stdin', ['HELLO'], [], '`up hello`')
+expect('  ... one with {}: the code as that argument', ['cba'], [], '`rev abc`')
+expect('  ... one of the same name replaces the built-in', ['JS x'], [], '`js x`')
+expect('  ... the built-ins stay', ['1024'], [], '`py 2**10`')
+del OPTIONS['@dabbrev-engines']
+OPTIONS['@dabbrev-eval'] = 'engines'
+not_run("@dabbrev-eval engines: no engine named, it is not run", '`echo hi`')
+expect('  ... an engine named, it is', ['hi'], [], '`sh echo hi`')
+OPTIONS['@dabbrev-eval'] = 'off'
+not_run('@dabbrev-eval off: not run', '`sh echo hi`')
+del OPTIONS['@dabbrev-eval']
 
 print('explain')
 pane = Pane(LISTS, '')

@@ -99,9 +99,12 @@ def around(pane, cy, cx=None):
 
 # Tab steps over a closer right after the cursor unless @electric-pair-tab is
 # off (read at each press); else it does what it did before, which is kept in
-# TAB_WAS (dabbrev's completion, say).
+# TAB_WAS (dabbrev's completion, say). When that is dabbrev's, a closing
+# backtick is left to it, to run the code before it (`date|`), unless
+# @dabbrev-eval is off.
 TAB_ON = '#{!=:#{@electric-pair-tab},off}'
 TAB_WAS = '@electric-pair-tab-was'
+DABBREV_EVALS = '#{==:#{@dabbrev-eval},off}'     # true when the backtick is stepped over
 
 # The pane option holding the places (|X:Y|...) where it left an empty pair:
 # BSpace there may take both, elsewhere it is BSpace with no process.
@@ -215,7 +218,9 @@ def bindings(script, programs, table, tab):
         lines.append(f'bind-key -n {quoted(ch)} if-shell -F {quoted(gate)} {{ {then} }} {{ {typed} }}')
         keys.append(ch)
     if closers:
-        steps = '#{&&:%s,#{&&:%s,%s}}' % (TAB_ON, gate, any_of([after(c) for c in closers]))
+        dabbrev = 'tmux-dabbrev' in tab
+        steps = '#{&&:%s,#{&&:%s,%s}}' % (TAB_ON, gate, any_of([
+            '#{&&:%s,%s}' % (after(c), DABBREV_EVALS) if c == '`' and dabbrev else after(c) for c in closers]))
         lines.append(f'bind-key -n Tab if-shell -F {quoted(steps)} {{ send-keys Right }} {{ {tab or "send-keys Tab"} }}')
         in_empty = '#{&&:%s,#{&&:%s,#{m:*|#{cursor_x}:#{cursor_y}|*,#{%s}}}}' % (
             gate, any_of([after(c) for c in closers]), EMPTY)

@@ -225,6 +225,25 @@ python3 "$EP" bind
 expect "  ... and is unbound again after" '' "$(tmux list-keys -T root Tab 2>/dev/null)"
 tmux set -g @electric-pair-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"
 python3 "$EP" bind
+editor; key '`' h Tab
+expect "  ... a backtick too" '`h`|' "$(line)"
+
+echo "Tab before a backtick, with dabbrev's Tab"
+# A stand-in tmux-dabbrev, whose Tab types D (dabbrev's would run the code).
+printf '#!/bin/sh\ntmux send-keys -t "$2" -l D\n' > "$SCRATCH/bin/tmux-dabbrev"
+chmod +x "$SCRATCH/bin/tmux-dabbrev"
+tmux bind-key -n Tab run-shell "$SCRATCH/bin/tmux-dabbrev tab '#{pane_id}'"
+python3 "$EP" bind
+editor; key '`' h Tab
+expect "goes to dabbrev, to run the code (\`h|\` + Tab)" '`hD|`' "$(line)"
+editor; key '(' h Tab
+expect "  ... other closers are stepped over still" '(h)|' "$(line)"
+tmux set -g @dabbrev-eval off
+editor; key '`' h Tab
+expect "  ... but with @dabbrev-eval off, stepped over" '`h`|' "$(line)"
+tmux set -gu @dabbrev-eval
+tmux unbind-key -n Tab
+python3 "$EP" bind
 
 echo "@tmux-tools-pairs"
 tmux set -g @tmux-tools-pairs '()'
@@ -253,6 +272,24 @@ tmux set -g @electric-pair-commands 'zsh'
 python3 "$EP" bind
 editor; key '(' BSpace '"'
 expect "in another program: keys as they are" '"|' "$(line)"
+
+echo "with dabbrev"
+tmux set -gu @tmux-tools-pairs
+cp "$HERE/../bin/tmux-dabbrev" "$SCRATCH/bin/"
+tmux set -g @electric-pair-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"
+tmux set -g @dabbrev-tab-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"
+python3 "$SCRATCH/bin/tmux-dabbrev" bind
+python3 "$EP" bind
+editor; key '`' e c h o ' ' h i Tab
+expect "\`echo hi\` (its closer typed by electric-pair) + Tab: what it prints" 'hi|' "$(line)"
+editor; key s a y ' ' '`' e c h o ' ' h i '`' Tab
+expect "  ... the closer typed (stepped over), then Tab" 'say hi|' "$(line)"
+editor; key '`' p y ' ' 2 '*' '*' 1 0 Tab
+expect "  ... \`py 2**10\`" '1024|' "$(line)"
+editor; key '`' e x i t ' ' 3 Tab
+expect "  ... a failure: left as it was" '`exit 3|`' "$(line)"
+editor; key '(' h e l l o Tab
+expect "(hello| + Tab steps over still" '(hello)|' "$(line)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

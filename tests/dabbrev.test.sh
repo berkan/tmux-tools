@@ -891,6 +891,29 @@ editor 'gamma'
 typed 'ga'; dab undo
 expect "with nothing to take back: nothing, and no key sent" "0 ga" "$(tabs) $(line)"
 
+echo "\`code\` + Tab: what it prints, in place of it"
+editor 'gamma'
+typed 'say `echo hi`'; dab tab
+expect "the span, backticks and all, replaced" 'say hi|6' "$(line)|$(cursor)"
+dab undo
+expect "  ... M-? puts it back" 'say `echo hi`|13' "$(line)|$(cursor)"
+editor 'gamma'
+typed 'say `echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab
+expect "the cursor before the closing backtick (as electric-pair leaves it): that goes too" 'say hi|6' "$(line)|$(cursor)"
+dab undo
+expect "  ... M-? puts it back, the cursor where it was" 'say `echo hi`|12' "$(line)|$(cursor)"
+editor 'gamma'
+typed "\`printf 'a\\nb'\`"; dab tab
+expect "output of several lines goes in as a paste (not as Enter)" $'a\nb' "$(line)"
+editor 'gamma'
+typed '`exit 3`'; dab tab
+expect "a failure: the span stays, and no Tab is sent" '0 `exit 3`' "$(tabs) $(line)"
+tmux set -g @dabbrev-eval engines
+editor 'gamma'
+typed '`echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab
+expect "@dabbrev-eval engines, none named: Tab before the closing backtick steps over it" '`echo hi`|9' "$(line)|$(cursor)"
+tmux set -gu @dabbrev-eval
+
 echo "bind"
 tmux set -g @dabbrev-tab-commands 'python3 claude'
 python3 "$DAB" bind

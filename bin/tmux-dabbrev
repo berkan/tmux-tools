@@ -6,6 +6,15 @@
 # keys: Claude Code, pi, a shell. Completions come from a backend, the first
 # in BACKENDS whose trigger matches the text before the cursor:
 #
+#   eval          Tab after `CODE` (or before its closing backtick, which
+#                 goes too): what CODE prints, in place of it, backticks and
+#                 all (Eval). A first word naming an engine (sh js py, and
+#                 those in @dabbrev-engines) runs the rest with it; else sh
+#                 runs it all, unless @dabbrev-eval is engines (then it must
+#                 be named; one not run, Tab before its closer steps over
+#                 it) or off. In the pane's folder, for at most
+#                 @dabbrev-eval-timeout seconds (5); a failure is shown in
+#                 the status line, the code left as it was.
 #   pipe          ... | ,NAME: what is left of the | (an operator or chain,
 #                 expanded; a \TEXT; else the word before it) put in the
 #                 snippet NAME, where its | is; ... |( between the pair, for
@@ -92,6 +101,8 @@ import copy
 import json
 import os
 import re
+import shlex
+import signal
 import subprocess
 import sys
 import tempfile
@@ -111,6 +122,15 @@ PIPE_COMPLETION_OPTION = '@dabbrev-pipe-completion'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
+# `code` + Tab (Eval): a code span, its first backtick not after a letter,
+# digit or backtick; and the engines that run it ({} the code, else stdin).
+CODE_CLOSED = re.compile(r'(?<![\w`])`([^`]+)`$')
+CODE_OPEN = re.compile(r'(?<![\w`])`([^`]+)$')
+EVAL_OPTION = '@dabbrev-eval'                                   # on, engines or off
+EVAL_TIMEOUT_OPTION, EVAL_TIMEOUT_DEFAULT = '@dabbrev-eval-timeout', 5.0
+ENGINES_OPTION, ENGINES_DEFAULT = '@dabbrev-engines', '~/.config/tmux-dabbrev/engines'
+ENGINES = {'sh': 'sh -c {}', 'js': 'node -p {}',
+           'py': 'python3 -c "import sys; print(eval(sys.argv[1]))" {}'}
 PATH_TYPED = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~/|\.\.?/|//|/[^/\s]+/)[^\s'"`]*$""")
 SCREEN_PATH = re.compile(r"""(?:^|(?<=[\s'"`(\[{<=]))(?:~|\.\.?)?/[^\s'"`()\[\]{}<>|;:,]*""")
 ESCAPE = re.compile(r'\x1b\[([0-9;:]*)m|\x1b\[[0-9;:?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b.')
@@ -819,8 +839,8 @@ def shown(state):
         text, back = alt['text'], alt.get('back', 0)
     elif len(state['levels']) > 1:
         text, back = level['none'], 0
-    else:
-        return level['none'], 0                 # what was typed, as it was
+    else:                                       # what was typed, as it was
+        return level['none'], state.get('typed_back', 0)
     return closed(text, back, state.get('close', ''), state.get('tight')), back
 
 
@@ -1177,7 +1197,105 @@ class Paths:
         return '/' if os.path.isdir(os.path.join(pane.cwd(), os.path.expanduser(path))) else ' '
 
 
-BACKENDS = [Pipe(), Snippets(), Paths(), Program(), Screen()]
+def engines():
+    """{name: command}: the built-in ENGINES, then those in the file named by
+    @dabbrev-engines (NAME COMMAND a line; a name already there replaced)."""
+    out = dict(ENGINES)
+    path = tmux('show-options', '-gqv', ENGINES_OPTION).strip() or ENGINES_DEFAULT
+    try:
+        with open(os.path.expanduser(path), encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and not parts[0].startswith('#'):
+            out[parts[0]] = parts[1]
+    return out
+
+
+def run(pane, command, code):
+    """What COMMAND prints for CODE (as its {} argument, else on its stdin),
+    run in the pane's folder: escape sequences and the line breaks at its end
+    taken out. On a failure (an exit not 0, no such program, longer than
+    @dabbrev-eval-timeout, whose whole process group is then stopped) None,
+    the error shown in the status line."""
+    def failed(message):
+        tmux('display-message', '-t', pane.pane, f'dabbrev: {message}')
+    try:
+        timeout = float(tmux('show-options', '-gqv', EVAL_TIMEOUT_OPTION).strip() or EVAL_TIMEOUT_DEFAULT)
+    except ValueError:
+        timeout = EVAL_TIMEOUT_DEFAULT
+    argv = shlex.split(command)
+    stdin = None if '{}' in argv else code
+    argv = [code if arg == '{}' else arg for arg in argv]
+    try:
+        proc = subprocess.Popen(argv, cwd=pane.cwd(), text=True, start_new_session=True,
+                                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as e:
+        failed(f'{argv[0]}: ' + ('not found' if isinstance(e, FileNotFoundError) else e.strerror))
+        return None
+    try:
+        out, err = proc.communicate(stdin, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        failed(f'stopped after {timeout:g} s (@dabbrev-eval-timeout)')
+        return None
+    if proc.returncode:
+        lines = [line for line in err.splitlines() if line.strip()]
+        failed(lines[0] if lines else f'exit {proc.returncode}')
+        return None
+    return ESCAPE.sub('', out).replace('\r', '').rstrip('\n')
+
+
+class Eval:
+    """`CODE` + Tab: what CODE prints, in place of it, backticks and all; the
+    cursor before the closing backtick will do (electric-pair leaves it
+    there), which goes as well. CODE's first word may name an engine (sh js
+    py, and those in @dabbrev-engines), which then runs the rest; else sh runs
+    it all, unless @dabbrev-eval is engines (an engine must be named) or off.
+    One not run, the cursor before its closing backtick, steps over it."""
+    name = 'eval'
+    keeps_tab = True                    # a failure is shown, not a Tab sent
+
+    def typed(self, pane, key):
+        mode = tmux('show-options', '-gqv', EVAL_OPTION).strip() or 'on'
+        if key != 'tab' or mode == 'off':
+            return None
+        m = CODE_CLOSED.search(pane.before)
+        if m and pane.before.count('`') % 2 == 0:
+            typed = m.group()
+        else:
+            m = CODE_OPEN.search(pane.before)
+            if not (m and pane.after.startswith('`') and pane.before.count('`') % 2):
+                return None
+            typed = m.group() + '`'                     # on past the cursor, to its closer
+        if mode == 'engines' and not self.engine(m.group(1))[0] and typed == m.group():
+            return None
+        return m.start(), typed
+
+    @staticmethod
+    def engine(code):
+        """(name, the code it runs) for CODE: the engine its first word names,
+        if any, else (None, CODE)."""
+        name, _, rest = code.partition(' ')
+        return (name, rest) if name in engines() and rest.strip() else (None, code)
+
+    def complete(self, pane, start, typed):
+        code = typed.strip('`')
+        name, body = self.engine(code)
+        if not name and tmux('show-options', '-gqv', EVAL_OPTION).strip() == 'engines':
+            return [{'text': typed}]                    # not run: a step over the closer
+        out = run(pane, engines()[name or 'sh'], body)
+        return [] if out is None else [{'text': out}]
+
+    def follow(self, pane, start, chosen):
+        return []
+
+
+BACKENDS = [Eval(), Pipe(), Snippets(), Paths(), Program(), Screen()]
 BY_NAME = {backend.name: backend for backend in BACKENDS}
 
 
@@ -1338,11 +1456,13 @@ def start(pane, key):
     if not alts and key == 'tab' and hasattr(backend, 'go_on'):
         alts = backend.go_on(pane, *found)
     if not alts:
-        return False
-    close = closer(pane.before, found[0], pane.pairs()) if backend.name != 'snippets' else ''
+        return getattr(backend, 'keeps_tab', False)
+    close = closer(pane.before, found[0], pane.pairs()) if backend.name not in ('snippets', 'eval') else ''
     tight = bool(close) and pane.after.startswith(close)     # it is there already (,rr's "|")
     state = {'backend': backend.name, 'start': found[0],
              'close': '' if tight else close, 'tight': tight,
+             # what was typed may go on past the cursor (eval's closing backtick)
+             'typed_back': len(pane.before[:found[0]] + found[1]) - len(pane.before),
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
     step(pane, state, lambda levels: levels[-1].update(index=0))
     return True

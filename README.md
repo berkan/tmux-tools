@@ -78,6 +78,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `M-/` | the best completion; again, the next one; past the last, what was typed |
 | `Tab` (in the programs below) | the same first completion; again, the word that follows it on screen, and so on |
 | `M-?` | take back the last press |
+| `Tab` after `` `code` `` | runs the code, its output in place of it: `` `date +%F` `` → `2026-10-25` (below) |
 
 | option | |
 |---|---|
@@ -90,6 +91,9 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
 | `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
 | `@dabbrev-spaced-marks` | the marks whose argument may also be one space after them, as `^ The` or `\ some text` [none]; for marks that do not come before a space in ordinary text, such as `'^_\'` (with `-` `.` `=` `,`, prose like `- item` would be read as an operator) |
+| `@dabbrev-eval` | which `` `code` `` + Tab runs [`on`: any; with no engine named, `sh`]; `engines`: only with an engine named (`` `sh ls` ``); `off`: none |
+| `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
+| `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |
 | `@dabbrev-pipe-completion` | right after a completion (`_h` + Tab, then `\|(` + Tab), the pipe's LEFT is that completion, whole: `(hello world)` [on]; `off`: as anywhere else (below) |
 
 Entities come before words. A completion after an opening quote or bracket
@@ -151,7 +155,7 @@ input, so it goes by what the screen shows either side of the cursor.
 | a closer, or a quote, with the same right after the cursor | steps over it |
 | a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
 | `BSpace` in an empty pair it typed | takes both |
-| `Tab` with a closer right after the cursor | steps over it: `(hello\|)` to `(hello)\|`; elsewhere Tab does what it did (dabbrev's completion) |
+| `Tab` with a closer right after the cursor | steps over it: `(hello\|)` to `(hello)\|`; elsewhere Tab does what it did (dabbrev's completion); a closing backtick is left to dabbrev, to run the code before it (unless `@dabbrev-eval` is `off`) |
 
 | option | |
 |---|---|
@@ -195,6 +199,34 @@ sig     Best,\nAda
 not take it as Enter), `\s` a space (for a trailing one), `\|` and `\\` a bar
 and a backslash. Names are letters, digits and `_`. The file is read at each
 `,name` completion, so edits apply at once.
+
+### Running code (dabbrev)
+
+`` `code` `` + Tab runs the code and puts what it prints in place of it,
+backticks and all, the line breaks at its end left out (several lines go
+in as a paste, not as Enter). Tab right before the closing backtick, where
+electric-pair leaves the cursor, does it too. The first word may name an
+engine, which runs the rest: `` `py 2**10` `` → `1024`, `` `js 1+2` `` → `3`;
+with none named, `sh` runs it all (`@dabbrev-eval`). It runs in the pane's
+folder, wherever tmux runs (inside the container, in ppi). On a failure the
+code stays and the error shows in the status line; `M-?` takes a result
+back (not what the code did).
+
+Built in: `sh` (`sh -c {}`), `js` (`node -p {}`), `py` (python3, `eval` of
+the code, printed). The file (`@dabbrev-engines`) adds to them or replaces
+them, one a line; `{}` is the code as one argument, without it the code goes
+to the command's stdin:
+
+```
+# NAME  COMMAND
+rb      ruby -e "p eval(ARGV[0])" {}
+bc      bc -l
+```
+
+Code in a prompt is easy to run by accident: Tab right after a code span
+(`` `git push --force` ``) runs it. `@dabbrev-eval engines` runs only spans
+that name their engine. Only the cursor's row is read, so code must be on
+one row.
 
 ### Sugar (dabbrev)
 
