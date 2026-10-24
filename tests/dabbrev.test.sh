@@ -437,6 +437,25 @@ editor "${PARA[@]}"
 typed '...cons'; dab tab
 expect "nothing before it: Tab goes through" '1 ...cons' "$(tabs) $(line)"
 
+echo "_word: the row that starts so (^word..\$)"
+LINES=('xyz is the line here' 'see xyzzy too' '  xyz again' 'a _private_name here')
+editor "${LINES[@]}"
+typed '_xy'
+expect "_xy: each row that starts so, whole; M-/ the next" 'xyz is the line here |xyz again |_xy|' "$(cycle 1 2 3)"
+editor "${LINES[@]}"
+typed '_pri'; dab tab
+expect "  ... no such row: as before (an identifier)" '_private_name ' "$(line)"
+editor "${LINES[@]}"
+typed 'say "_xy'; dab tab
+expect "  ... closed after a quote" 'say "xyz is the line here" ' "$(line)"
+printf 'rr  re: "|" --\\s\n' > "$SCRATCH/rr.snippets"
+tmux set -g @dabbrev-snippets "$SCRATCH/rr.snippets"
+editor "${LINES[@]}"
+typed ',r'; dab tab
+typed '_xy'; dab tab
+expect "  ... ,r then _xy: inside the snippet's quotes" 're: "xyz is the line here" -- ' "$(line)"
+tmux set -gu @dabbrev-snippets
+
 echo "after an opening quote or bracket, the completion is closed"
 editor 'say hello world here'
 typed 'x "hel'; dab tab

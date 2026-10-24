@@ -42,6 +42,8 @@
 #                 and with no such match, all words. -WORD and .WORD the
 #                 same, the mark gone (else as before, the mark kept); 2.
 #                 (or 2)) the items numbered so, whole.
+#                 _WORD the rows that start so, whole (^WORD..$), else as
+#                 before (_private).
 #                 =WORD only entities, those of more words first; the =
 #                 goes, and with none such, nothing. After an anchor one
 #                 letter is enough for Tab.
@@ -659,6 +661,8 @@ class Screen:
             return m.start(), m.group()
         least = 2 if key == 'tab' else 1
         m = TYPED.search(pane.before)
+        if m and re.fullmatch(r'_\w[\w\'./-]*', m.group()) and re.search(OPEN + '$', pane.before[:m.start()]):
+            return m.start(), m.group()             # _word: the row that starts so
         if m:
             lead = pane.before[:m.start()]
             mark = re.search(OPEN + r'[-.=]$', lead)
@@ -674,6 +678,8 @@ class Screen:
     def complete(self, pane, start, typed):
         if typed.startswith('..'):
             return up_to(pane, start, re.fullmatch(UPTO, typed).group(1))
+        if typed[:1] == '_' and len(typed) > 1:   # _xyz: ^xyz..$, else as before
+            return self.query_up_to(pane, start, '^' + typed[1:], '$') or self.words(pane, start, typed)
         m = QUERY_UPTO.fullmatch(typed)
         if m:                                       # ^T..$$: each match of ^T, taken on
             return self.query_up_to(pane, start, m.group('query'), re.fullmatch(UPTO, m.group('op')).group(1))
