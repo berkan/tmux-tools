@@ -60,7 +60,9 @@
 #
 # After an opening quote or bracket that begins a word ("hel, (hel), the
 # completion is closed with its pair ("hello" ), the closer moving on as Tab
-# adds words; not once the text holds the closer, nor for a snippet.
+# adds words; not once the text holds the closer, nor for a snippet. With the
+# closer right after the cursor already (,rr's re: "|" -- ), the completion
+# ends against it, without its space.
 #
 #   expand (M-/)  the best word on screen that starts with what was typed:
 #                 the entities before any word (and only they for
@@ -553,7 +555,8 @@ CLOSERS = {'"': '"', "'": "'", '`': '`', '(': ')', '[': ']', '{': '}', '<': '>',
 
 
 def closer(before, start):
-    """The closer for the opener just before START in BEFORE, or ''."""
+    """The closer for the opener just before START in BEFORE, or ''. (One
+    already right after the cursor is not added: see start.)"""
     opener = before[start - 1:start] if start else ''
     if opener in CLOSERS and (start == 1 or before[start - 2].isspace() or before[start - 2] in CLOSERS):
         return CLOSERS[opener]
@@ -577,6 +580,8 @@ def shown(state):
     close = state.get('close', '')
     if close and not back and text.endswith(' ') and close not in text:
         text = text[:-1] + close + ' '
+    elif state.get('tight') and not back and text.endswith(' '):
+        text = text[:-1]                        # up to the closer already there
     return text, back
 
 
@@ -833,6 +838,7 @@ class Pane:
         self.screen = tmux('capture-pane', '-p', '-N', '-t', pane).split('\n')
         self.cy = cy
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
+        self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
         self._cwd = self._escaped = self._order = self._kinds = None
 
     def cwd(self):
@@ -946,8 +952,10 @@ def start(pane, key):
         alts = backend.go_on(pane, *found)
     if not alts:
         return False
+    close = closer(pane.before, found[0]) if backend.name != 'snippets' else ''
+    tight = bool(close) and pane.after.startswith(close)     # it is there already (,rr's "|")
     state = {'backend': backend.name, 'start': found[0],
-             'close': closer(pane.before, found[0]) if backend.name != 'snippets' else '',
+             'close': '' if tight else close, 'tight': tight,
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
     step(pane, state, lambda levels: levels[-1].update(index=0))
     return True

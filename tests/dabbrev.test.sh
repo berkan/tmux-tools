@@ -461,6 +461,15 @@ expect "  ... after an anchor too" '"Claude Code" ' "$(line)"
 editor 'say hello world here'
 typed 'f(hel'; dab tab
 expect "  ... not after one that does not begin a word" 'f(hello ' "$(line)"
+printf 'rr  re: "|" --\\s\n' > "$SCRATCH/rr.snippets"
+tmux set -g @dabbrev-snippets "$SCRATCH/rr.snippets"
+editor $'see \e[1mThe model\e[0m here'
+typed ',rr'; dab tab
+typed '=T'; dab tab
+expect "  ... not when the closer is right after the cursor (,rr then =T): up to it" 're: "The model" -- |14' "$(line)|$(cursor)"
+dab tab
+expect "  ... and Tab goes on there" 're: "The model here" -- |19' "$(line)|$(cursor)"
+tmux set -gu @dabbrev-snippets
 editor 'say "hello world" here'
 typed '"hel'; dab tab tab tab
 expect "  ... not once what it takes holds the closer" '"hello world" here ' "$(line)"
