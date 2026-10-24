@@ -13,6 +13,7 @@ named.
 | `jump-click` | jump to any place on screen by keyboard; in a prompt the program's own cursor moves there |
 | `expand-region` | in copy mode, grow the selection to the next larger region (word, path, quotes, brackets, line, paragraph), like Emacs' expand-region |
 | `quote-reply` | paste the newest copy as `re: "…" -- `, to quote an answer back to an agent |
+| `electric-pair` | type brackets and quotes in pairs, like Emacs' `electric-pair-mode`: `(` gives `(\|)`, `)` steps over the one after the cursor, Backspace takes an empty pair |
 
 ## Requirements
 
@@ -130,6 +131,26 @@ second jump moves the selection's end.
 | `@expand-region-expand-key`, `@expand-region-shrink-key` | the keys [`=`, `-`] |
 | `@expand-region-rules` | a rules file [`~/.config/tmux-expand-region/rules`]; `tmux-expand-region rules` prints the rules in effect |
 
+### electric-pair
+
+In the programs below, without the prefix. tmux cannot see a program's
+input, so it goes by what the screen shows either side of the cursor.
+
+| key | does |
+|---|---|
+| an opener `(` `[` `{` | types the pair, the cursor between: `(\|)`; not before a letter or digit, nor after `\` |
+| a quote `"` `'` `` ` `` | the same, and not after a letter or digit either (`don't`) |
+| a closer, or a quote, with the same right after the cursor | steps over it |
+| `BSpace` between an empty pair | takes both |
+
+| option | |
+|---|---|
+| `@electric-pair-pairs` | the pairs, two characters each [``` ()[]{}""''`` ```]; e.g. `'()[]{}""<>'` |
+| `@electric-pair-commands` | programs it works in, by `#{pane_current_command}` [`claude codex pi node agy gemini`]; `''` binds nothing |
+
+dabbrev's completions end against a closer already after the cursor, so
+`(` then `hel` + Tab gives `(hello)` with the cursor before the `)`.
+
 ### quote-reply
 
 | option | |
@@ -233,6 +254,7 @@ bash tests/dabbrev.test.sh         # typing into a real pane: minutes
 bash tests/link.test.sh
 bash tests/jump-click.test.sh
 bash tests/expand-region.test.sh
+bash tests/electric-pair.test.sh
 bash tests/entry.test.sh           # tmux-tools.tmux
 ```
 

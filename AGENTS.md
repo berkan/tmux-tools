@@ -13,7 +13,8 @@ every change to keys, options, files or the dabbrev language.
     pane, no tmux, under a second: the first place for a language change
   - `bash tests/dabbrev.test.sh` — typing into a real pane (minutes)
   - `bash tests/link.test.sh`, `bash tests/jump-click.test.sh`,
-    `bash tests/expand-region.test.sh`, `bash tests/entry.test.sh`
+    `bash tests/expand-region.test.sh`, `bash tests/electric-pair.test.sh`,
+    `bash tests/entry.test.sh`
   `link` also has to pass on tmux 3.4 (copy mode keeps no links there).
 - **No dependency on any particular setup**: defaults under
   `~/.config/<tool>/`, options named after the tool (`@dabbrev-…`,

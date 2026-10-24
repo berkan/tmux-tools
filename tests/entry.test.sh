@@ -21,11 +21,11 @@ expect() {
     if [ "$got" = "$want" ]; then pass=$((pass + 1)); echo "  ✓ $name"
     else fail=$((fail + 1)); echo "  ✗ $name: want '$want', got '$got'"; fi
 }
-# bound — which tools have keys: dabbrev link jump-click expand-region quote-reply.
+# bound — which tools have keys: dabbrev link jump-click expand-region quote-reply electric-pair.
 bound() {
     local keys out=''
     keys=$(tmux list-keys)
-    for t in dabbrev link jump-click expand-region quote-reply; do
+    for t in dabbrev link jump-click expand-region quote-reply electric-pair; do
         grep -q "tmux-$t" <<<"$keys" && out+="$t "
     done
     echo "$out"
@@ -35,7 +35,7 @@ fresh() { tmux kill-server 2>/dev/null || true; tmux -f /dev/null new-session -d
 fresh
 tmux set -g @quote-reply-key r
 bash "$ENTRY"
-expect "@tmux-tools unset: every tool" 'dabbrev link jump-click expand-region quote-reply ' "$(bound)"
+expect "@tmux-tools unset: every tool" 'dabbrev link jump-click expand-region quote-reply electric-pair ' "$(bound)"
 fresh
 tmux set -g @tmux-tools 'dabbrev link'
 bash "$ENTRY"
@@ -46,7 +46,7 @@ bash "$ENTRY"
 expect "@tmux-tools '': none" '' "$(bound)"
 fresh
 bash "$ENTRY"
-expect "quote-reply binds nothing without @quote-reply-key" 'dabbrev link jump-click expand-region ' "$(bound)"
+expect "quote-reply binds nothing without @quote-reply-key" 'dabbrev link jump-click expand-region electric-pair ' "$(bound)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
