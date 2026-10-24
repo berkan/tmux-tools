@@ -105,6 +105,44 @@ expect('  ... nor one of the marks', ['Does When '], MD, '=Does Wh')
 expect('_ is one too, built in', ['# Title here '], MD, '_#')
 del OPTIONS['@dabbrev-sugars']
 
+print('chains: several operators in one press, what is between them kept')
+LISTS = ['1. First thing', '2. Second thing', '- Which one', '- Whatever else', '', 'Does When set up?']
+expect('1. 2.', ['1. First thing 2. Second thing '], LISTS, '1. 2.')
+expect('1., 2.: the joiner as typed', ['1. First thing, 2. Second thing '], LISTS, '1., 2.')
+expect('-Wh; =Does', ['Which one; Does When '], LISTS, '-Wh; =Does')
+expect('the last one cycles (M-/)', ['1. First thing, Which one ', '1. First thing, Whatever else '], LISTS, '1., -Wh')
+expect('a plain word breaks a chain: only the last expands', ['2. Second thing '], LISTS, '1. and 2.')
+expect('a non-last argument is one word: "-Wh one, 2." is the last only', ['2. Second thing '], LISTS, '-Wh one, 2.')
+SNIP = os.path.join(scratch, 'snippets')
+open(SNIP, 'w').write('rr  re: "|" --\\s\n')
+OPTIONS['@dabbrev-snippets'] = SNIP
+expect(',r=Does: the snippet, then the entity in its quotes', ['re: "Does When" -- '], LISTS, ',r=Does')
+pane = Pane(LISTS, ',r=Does')
+found = d.Screen().typed(pane, 'tab')
+alt = d.Screen().complete(pane, *found)[0]
+expect_back = alt.get('back')
+passed, failed = (passed + 1, failed) if expect_back == 5 else (passed, failed + 1)
+print('  ✓' if expect_back == 5 else f'  ✗ (back {expect_back})', '  ... the cursor before the snippet\'s closing quote')
+del OPTIONS['@dabbrev-snippets']
+
+print('\\: literal text up to the next operator')
+expect('1. \\then 2.', ['1. First thing then 2. Second thing '], LISTS, '1. \\then 2.')
+expect('=Does \\and then -Wh', ['Does When and then Which one '], LISTS, '=Does \\and then -Wh')
+
+print('ends that are places: ..^WORD the line that starts so, ..-WORD (..-) the list item')
+expect('^The oth..^The: up to and with the next line starting The', ['The other direction: a pattern here. Then more. The '], MD, '^The oth..^The')
+expect('^The oth...^The: up to it', ['The other direction: a pattern here. Then more. '], MD, '^The oth...^The')
+expect('-Which...-: up to the next item', ['Which one is wrapped on '], MD, '-Which...-')
+expect('-Which..-Wha: up to and with Whatever', ['Which one is wrapped on - Whatever '], MD, '-Which..-Wha')
+
+print('explain')
+pane = Pane(LISTS, '')
+lines = d.explain(pane, '1., -Wh')
+want = ["number '1.' then ', '", "mark - 'Wh'"]
+ok = all(any(w in l for l in lines) for w in want) and any('Which one' in l for l in lines)
+passed, failed = (passed + 1, failed) if ok else (passed, failed + 1)
+print('  ✓ the units, joiners and what each takes' if ok else f'  ✗ explain: {lines}')
+
 print(f'{passed} passed, {failed} failed')
 sys.exit(1 if failed else 0)
 EOF

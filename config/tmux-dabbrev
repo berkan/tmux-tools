@@ -83,6 +83,7 @@
 #       empty: Tab is left alone); run it from tmux.conf after setting them.
 #       All run in the foreground, so keys typed meanwhile wait and stay in
 #       order.
+import copy
 import json
 import os
 import re
@@ -403,11 +404,38 @@ def continuations(pane, following):
     return out
 
 
+def line_starts(line):
+    """Where a line starts in LINE: its first character past spaces and marks
+    that are not ASCII (⏺ │ ❯), and its first word if that is further on
+    (# heading, - item)."""
+    first = next((i for i, ch in enumerate(line)
+                  if not (ch.isspace() or (not ch.isascii() and not ch.isalnum()))), None)
+    word = WORD.search(line)
+    return sorted({p for p in (first, word and word.start()) if p is not None})
+
+
 def ends(following, target, exclusive=False):
     """Where in FOLLOWING the text up to TARGET (as in up_to) ends, in order;
     EXCLUSIVE: before the word or the mark, not after it, and before the
     spaces before it, so what follows starts with them."""
     before = lambda i: len(following[:i].rstrip())
+    if target[:1] in '^-':                      # a place: the next line, or list item, that starts so
+        arg = target[1:].lstrip(' ')
+        pattern = re.compile(r'\s+'.join(map(re.escape, arg.split())), 0 if arg != arg.lower() else re.I) if arg else None
+        out, pos = [], following.find('\n')
+        while pos != -1:
+            first, pos = pos + 1, following.find('\n', pos + 1)
+            line = following[first:pos if pos != -1 else len(following)]
+            m = LIST_MARK.match(line)
+            for a in line_starts(line) if target[0] == '^' else [m.end()] if m else []:
+                found = pattern.match(line, a) if pattern else None
+                if pattern is None or found:
+                    if exclusive or not pattern:        # before the line, marks and all
+                        out.append(before(first + len(line) - len(line.lstrip())))
+                    else:
+                        out.append(first + found.end() + len(re.match(r'\S*', line[found.end():]).group()))
+                    break
+        return out
     if target == '$':
         m = re.search(r'\S[^\n]*', following)
         return [m.end()] if m else []
@@ -480,7 +508,17 @@ def up_to(pane, start, word, exclusive=False):
 #                              DOTS is on screen (up_to)
 #   DOTS  .. with the end, ... without it (@dabbrev-ruby-ranges; off: as ..)
 #   END   a word, $ (the line's end), $$ (the block's), . (the sentence's),
-#         ? or !
+#         ? or !, ^ARG (the next line that starts so), -ARG or - (the next
+#         list item, that starts so)
+#
+# Several units in one press make a chain: operators, ,NAME (a snippet; one
+# right after it may touch it: ,r=Wh) and \TEXT (TEXT as it is, up to the
+# next unit), joined by what is typed between them, spaces and , ; : (kept:
+# 1., 2. gives the two items with ", " between). All but the last take an
+# argument of one word; a word of text between them breaks the chain, and
+# only what follows it is read. Each is expanded to its first match, in the
+# text the ones before leave (so =Wh after ,r goes in the snippet's quotes);
+# M-/ and Tab work on the last.
 #
 # A mark begins an operator when what is before it is not a letter or digit
 # (a line's start, a space, a quote, a bracket, another mark) and its
@@ -494,7 +532,7 @@ def up_to(pane, start, word, exclusive=False):
 KINDS = {'^': 'line', '-': 'item', '.': 'sentence', '=': 'entity'}
 SUGARS = {'_': '^%..$'}                         # the row that starts so
 SUGARS_OPTION, SUGARS_DEFAULT = '@dabbrev-sugars', '~/.pi/agent/tmux-dabbrev.sugars'
-DOTS_END = re.compile(r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?])$")
+DOTS_END = re.compile(r"(\.\.\.?) ?(\w[\w'./-]*|\$\$?|[.!?]|\^ ?\S.*|-(?:\w.*)?)$")
 NUMBER_END = re.compile(r'(?:^|(?<=\W))(\d+)[.)]$')
 
 
@@ -563,6 +601,72 @@ def last_mark(text, marks):
     return None
 
 
+SNIPPET_AT = re.compile(r',(\w+)')
+NUMBER_AT = re.compile(r'(\d+)[.)](?=[\s,;:]|$)')
+JOINER = re.compile(r'[ \t,;:]*')
+
+
+def unit_starts(text, i, marks, touching=False):
+    """Whether a unit begins at I of TEXT: an operator (op_start), ,NAME, a
+    number or \\TEXT, after anything but a letter or digit (or TOUCHING the
+    unit before it)."""
+    if i and re.match(r'\w', text[i - 1]) and not touching:
+        return False
+    ch = text[i]
+    if ch == ',':
+        return bool(SNIPPET_AT.match(text, i))
+    if ch == '\\':
+        return i + 1 < len(text) and not text[i + 1].isspace()
+    if ch.isdigit():
+        return bool(NUMBER_AT.match(text, i)) and not (i and text[i - 1].isdigit())
+    return not (ch == '.' and i and text[i - 1] == '.') and op_start(' ' + text[i:], 1, marks)
+
+
+def unit_end(text, i, marks, last):
+    """Where the unit beginning at I of TEXT ends: the LAST one at TEXT's end
+    (or None), the others after one word (or None)."""
+    ch = text[i]
+    if ch == ',':
+        end = SNIPPET_AT.match(text, i).end()
+    elif ch == '\\':
+        end = next((k for k in range(i + 2, len(text)) if unit_starts(text, k, marks)), len(text))
+    elif ch.isdigit():
+        end = NUMBER_AT.match(text, i).end()
+    elif last:
+        unit = last_unit(text[i:], marks)
+        return len(text) if unit and not unit['start'] else None
+    else:
+        token = re.match(r'[^\s,;:]+', text[i:]).group()
+        unit = last_unit(token, marks)
+        return i + len(token) if unit and not unit['start'] else None
+    return end if not last or end == len(text) else None
+
+
+def parse_chain(text, marks):
+    """(start, [(a, b, joiner)]): the chain of two units or more TEXT ends in
+    (see above), each unit TEXT[a:b] and the JOINER after it; or None."""
+    for i in range(len(text)):
+        if not unit_starts(text, i, marks):
+            continue
+        units, pos, touching = [], i, False
+        while unit_starts(text, pos, marks, touching):
+            if unit_end(text, pos, marks, True) == len(text):
+                units.append((pos, len(text), ''))
+                if len(units) > 1:
+                    return i, units
+                break
+            end = unit_end(text, pos, marks, False)
+            if end is None:
+                break
+            j = JOINER.match(text, end).end()
+            touching = j == end and text[pos] in ',\\'
+            if j == len(text) or (j == end and not touching):
+                break
+            units.append((pos, end, text[end:j]))
+            pos = j
+    return None
+
+
 def places(pane, kind, number=None):
     """[(row, a, b)] where KIND's matches may start on the screen (not the
     cursor's row): line starts (a row's first character past spaces and
@@ -574,11 +678,7 @@ def places(pane, kind, number=None):
         if row == pane.cy or not line.strip():
             continue
         if kind == 'line':
-            first = next((i for i, ch in enumerate(line)
-                          if not (ch.isspace() or (not ch.isascii() and not ch.isalnum()))), None)
-            word = WORD.search(line)
-            for a in sorted({p for p in (first, word and word.start()) if p is not None}):
-                out.append((row, a, None))
+            out += [(row, a, None) for a in line_starts(line)]
         elif kind == 'item':
             m = LIST_MARK.match(line)
             if m and (number is None or re.fullmatch(r'\W*?' + re.escape(number) + r'[.)]\s+', m.group())):
@@ -677,12 +777,18 @@ def shown(state):
         text, back = level['none'], 0
     else:
         return level['none'], 0                 # what was typed, as it was
-    close = state.get('close', '')
+    return closed(text, back, state.get('close', ''), state.get('tight')), back
+
+
+def closed(text, back, close, tight):
+    """TEXT closed with CLOSE before its trailing space (unless it holds it,
+    or the cursor is not at its end), or with TIGHT (the closer is right
+    after the cursor already) ending against it, without that space."""
     if close and not back and text.endswith(' ') and close not in text:
-        text = text[:-1] + close + ' '
-    elif state.get('tight') and not back and text.endswith(' '):
-        text = text[:-1]                        # up to the closer already there
-    return text, back
+        return text[:-1] + close + ' '
+    if tight and not back and text.endswith(' '):
+        return text[:-1]
+    return text
 
 
 # A backend: typed(pane, key) is (start, typed) for the word before the cursor
@@ -753,6 +859,9 @@ class Screen:
     name = 'screen'
 
     def typed(self, pane, key):
+        chain = parse_chain(pane.before, set(KINDS) | set(pane.sugars()))
+        if chain:
+            return chain[0], pane.before[chain[0]:]
         unit = last_unit(pane.before, set(KINDS) | set(pane.sugars()))
         if unit:
             return unit['start'], unit['text']
@@ -766,6 +875,9 @@ class Screen:
 
     def complete(self, pane, start, typed):
         sugar = pane.sugars()
+        chain = parse_chain(typed, set(KINDS) | set(sugar))
+        if chain and not chain[0]:
+            return self.chain_alts(pane, start, typed, chain[1])
         unit = last_unit(typed, set(KINDS) | set(sugar))
         if not unit or unit['start']:
             return self.words(pane, start, typed)
@@ -777,6 +889,45 @@ class Screen:
         else:
             alts = anchored(pane, start, unit)
         return alts or self.fallback(pane, start, typed)
+
+    def unit_alts(self, pane, start, text):
+        """The alternatives for one unit TEXT of a chain, typed from START."""
+        if text.startswith(','):
+            return Snippets().complete(pane, start, text)
+        if text.startswith('\\'):
+            return [{'text': text[1:]}]
+        return self.complete(pane, start, text)
+
+    def chain_alts(self, pane, start, typed, units):
+        """The alternatives for a chain TYPED from START (parse_chain's UNITS):
+        each unit but the last expanded to its first alternative (or left as
+        typed) in the text the ones before it leave, its JOINER after it; one
+        alternative for each of the last's, closed (closed) where an opener
+        before it says, the cursor after it (before a snippet's rest)."""
+        prefix = suffix = ''                        # what the chain puts left and right of the cursor
+        for n, (a, b, joiner) in enumerate(units):
+            text = typed[a:b]
+            view = pane.at(pane.before[:start] + prefix + text, suffix + pane.after)
+            ustart = start + len(prefix)
+            close = closer(view.before, ustart) if n and not text.startswith(',') else ''
+            tight = bool(close) and view.after.startswith(close)
+            alts = self.unit_alts(view, ustart, text)
+            if n == len(units) - 1:
+                chain = {'prefix': prefix, 'suffix': suffix, 'close': '' if tight else close, 'tight': tight}
+                return [self.compose(alt, chain) for alt in alts]
+            alt = alts[0] if alts else {'text': text}
+            done = closed(alt['text'], alt.get('back', 0), '' if tight else close, tight)
+            cut = len(done) - alt.get('back', 0)
+            left = done[:cut].rstrip(' ') + joiner if joiner else done[:cut]
+            prefix, suffix = prefix + left, done[cut:] + suffix
+        return []
+
+    @staticmethod
+    def compose(alt, chain):
+        """ALT, the last unit's, in its CHAIN: {'text', 'back', 'chain'}."""
+        done = closed(alt['text'], alt.get('back', 0), chain['close'], chain['tight'])
+        return {'text': chain['prefix'] + done + chain['suffix'], 'back': alt.get('back', 0) + len(chain['suffix']),
+                'chain': {**chain, 'unit': alt}}
 
     def fallback(self, pane, start, typed):
         """An operator with nothing of its kind matching is text: its last word
@@ -793,6 +944,10 @@ class Screen:
                 for text, following in candidates(pane, start, typed)]
 
     def follow(self, pane, start, chosen):
+        if 'chain' in chosen:                       # Tab on after a chain: on after its last unit
+            unit = chosen['chain']['unit']
+            return [self.compose(alt, chosen['chain'])
+                    for alt in (self.follow(pane, start, unit) if 'following' in unit else [])]
         return [{'text': chosen['text'][:-1] + chunk + ' ', 'following': rest}
                 for chunk, rest in continuations(pane, chosen['following'])]
 
@@ -895,6 +1050,13 @@ class Pane:
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
         self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
         self._cwd = self._escaped = self._order = self._kinds = self._sugars = None
+
+    def at(self, before, after):
+        """This pane with BEFORE and AFTER the cursor instead (a chain's
+        units, each in the text the ones before it leave)."""
+        view = copy.copy(self)
+        view.before, view.after = before, after
+        return view
 
     def cwd(self):
         if self._cwd is None:
@@ -1089,8 +1251,47 @@ def bind():
     tmux('set-option', '-g', '@dabbrev-bound-keys', ' '.join(keys))
 
 
+def explain(pane, text):
+    """Lines saying how TEXT, typed before the cursor in PANE, is read: its
+    units (a chain's, or the one), what is between them, and what each takes
+    from the screen (the first few), then what Tab would type."""
+    marks = set(KINDS) | set(pane.sugars())
+    chain = parse_chain(text, marks)
+    unit = last_unit(text, marks)
+    units = chain[1] if chain else [(unit['start'], len(text), '')] if unit else []
+    start = chain[0] if chain else unit['start'] if unit else len(text)
+    lines = [f'{text!r}: ' + (f'a chain of {len(units)}' if chain else 'one unit' if unit else
+                              'no operator: the last word is completed from the screen')]
+    screen = Screen()
+    for a, b, joiner in units:
+        part = text[a:b]
+        u = last_unit(part, marks)
+        if part.startswith(','):
+            what = f'snippet {part[1:]!r}'
+        elif part.startswith('\\'):
+            what = f'text {part[1:]!r}'
+        elif u and u['kind'] == 'number':
+            what = f'number {part!r}'
+        elif u and u['kind'] == 'upto':
+            what = (f"mark {u['mark']} {u['arg']!r}, " if u['mark'] else 'from the text before, ') + \
+                f"{'up to' if u['dots'] == '...' and pane.ruby_ranges() else 'up to and with'} {u['end']!r}"
+        else:
+            what = f"mark {u['mark']} {u['arg']!r}" if u else f'{part!r}'
+        alts = screen.unit_alts(pane.at(text[:b], ''), a, part)
+        lines.append(f'  {what}' + (f' then {joiner!r}' if joiner else '') + ' → ' +
+                     ('; '.join(repr(alt['text']) for alt in alts[:3]) or 'nothing'))
+    pane = pane.at(text, '')
+    found = screen.typed(pane, 'tab')
+    alts = screen.complete(pane, *found) if found else []
+    lines.append('Tab types: ' + (repr(alts[0]['text']) if alts else 'nothing (Tab goes to the program)'))
+    return lines
+
+
 if __name__ == '__main__':
     if sys.argv[1:] == ['bind']:
         bind()
+    elif sys.argv[1:2] == ['explain'] and len(sys.argv) >= 3:
+        target = sys.argv[3] if len(sys.argv) > 3 else os.environ.get('TMUX_PANE', '')
+        print('\n'.join(explain(Pane(target), sys.argv[2])))
     else:
         {'expand': expand, 'tab': tab, 'undo': undo}[sys.argv[1]](Pane(sys.argv[2]))

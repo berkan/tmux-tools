@@ -487,6 +487,30 @@ typed '_xy'; dab tab
 expect "  ... ,r then _xy: inside the snippet's quotes" 're: "xyz is the line here" -- ' "$(line)"
 tmux set -gu @dabbrev-snippets
 
+echo "chains: several operators in one press"
+CHAIN=('1. First thing' '2. Second thing' '- Which one' '- Whatever else' '' $'\e[1mDoes When\e[0m set up?')
+editor "${CHAIN[@]}"
+typed '1., 2.'; dab tab
+expect "1., 2.: both items, joined as typed" '1. First thing, 2. Second thing ' "$(line)"
+dab undo
+expect "  ... undo: back to what was typed" '1., 2.' "$(line)"
+editor "${CHAIN[@]}"
+typed 'see 1., -Wh'; dab tab expand
+expect "  ... M-/ cycles the last" 'see 1. First thing, Whatever else ' "$(line)"
+printf 'rr  re: "|" --\\s\n' > "$SCRATCH/rr.snippets"
+tmux set -g @dabbrev-snippets "$SCRATCH/rr.snippets"
+editor "${CHAIN[@]}"
+typed ',r=Does'; dab tab
+expect ",r=Does: the snippet, the entity in its quotes, the cursor after it" 're: "Does When" -- |14' "$(line)|$(cursor)"
+dab tab
+expect "  ... Tab goes on there" 're: "Does When set" -- |18' "$(line)|$(cursor)"
+dab undo undo
+expect "  ... undo back to what was typed" ',r=Does|7' "$(line)|$(cursor)"
+tmux set -gu @dabbrev-snippets
+editor "${CHAIN[@]}"
+typed '"1., 2.'; dab tab
+expect "  ... after a quote: the chain closed" '"1. First thing, 2. Second thing" ' "$(line)"
+
 echo "after an opening quote or bracket, the completion is closed"
 editor 'say hello world here'
 typed 'x "hel'; dab tab
