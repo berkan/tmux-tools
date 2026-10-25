@@ -40,9 +40,10 @@
 #   screen        the words on the pane's screen (not the scrollback), and
 #                 its entities: coloured spans (runs of text in a style of
 #                 their own, such as an id or a path, not a whole line),
-#                 CamelCase words and runs of Capitalised Words, those of
-#                 the kinds in @dabbrev-entities (default: coloured
-#                 camelcase capitalised; '' none); below.
+#                 the words in them and in faint or grey lines, CamelCase
+#                 words and runs of Capitalised Words, those of the kinds in
+#                 @dabbrev-entities (default: coloured words camelcase
+#                 capitalised; '' none); below.
 #
 # A completion from the screen ends in a space, so the next press can follow
 # at once.
@@ -54,13 +55,15 @@
 #                 line starting T to the block's end, keep them in ..cons
 #                 from where "keep them in" is on screen to consumes. M-/
 #                 goes on to the next match; Tab after one, word by word.
-#                 With none, an operator is text (^Howitzer).
+#                 With none, an operator is text (^Howitzer), but =word
+#                 with @dabbrev-entity-fallback word drops its =.
 #
 # After an opening quote or bracket that begins a word ("hel, (hel), the
 # completion is closed with its pair ("hello" ), the closer moving on as Tab
 # adds words; not once the text holds the closer, nor for a snippet. With the
-# closer right after the cursor already (,rr's re: "|" -- ), the completion
-# ends against it, without its space.
+# closer after the cursor already (,rr's re: "|" -- ; or past spaces, but not
+# a quote that begins the next word: present), the completion ends against
+# it, without its space.
 #
 #   expand (M-/)  the best word on screen that starts with what was typed:
 #                 the entities before any word (and only they for
@@ -82,6 +85,10 @@
 #                 sent on to the program instead when there is nothing to
 #                 complete: no backend takes the word (for the screen, under
 #                 two letters before the cursor) or it has no match.
+#   tab-step      Tab as electric-pair hands it on with a closer right after
+#                 the cursor: a step over it after a word (or nothing), but
+#                 after an operator, a snippet, a pipe, code or a path, Tab
+#                 (steps_over).
 #   undo (M-?)    take back the last press; again, the one before, back to
 #                 what was typed.
 #
@@ -141,7 +148,10 @@ DEFAULT = (None, None, frozenset())             # (foreground, background, attri
 # capital after a small letter or digit), and two or more Capitalised Words
 # of two letters or more each (not "When I").
 CAMEL = re.compile(r'(?<![\w])[A-Za-z0-9]*[a-z0-9][A-Z][A-Za-z0-9]*(?![\w])')
-ENTITIES_OPTION, ENTITIES_DEFAULT = '@dabbrev-entities', 'coloured camelcase capitalised'
+ENTITIES_OPTION, ENTITIES_DEFAULT = '@dabbrev-entities', 'coloured words camelcase capitalised'
+# =ARG with no entity starting so: text, ARG completed as a word (=tmux), or
+# with word, the word without the = (tmux).
+ENTITY_FALLBACK_OPTION = '@dabbrev-entity-fallback'
 CAPITALISED = re.compile(r"(?<![\w'’-])[A-Z][\w'’-]+(?: [A-Z][\w'’-]+)+(?![\w'’-])")
 KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?')}
 # Claude Code on macOS is named for its version (2.1.310).
@@ -285,9 +295,20 @@ def spans(plain, escaped):
     return out
 
 
+def styled_words(plain, escaped):
+    """[(start, end)] in PLAIN of the words (of two letters or more) in text
+    not in the default style: each word of a coloured run, and of a faint or
+    grey line, which spans leaves out whole (Bash(tmux list-keys))."""
+    cells = styled(escaped)
+    if ''.join(ch for ch, _ in cells).rstrip() != plain.rstrip():
+        return []                               # the screen changed between the captures
+    return [m.span() for m in WORD.finditer(plain)
+            if m.end() - m.start() >= 2 and all(cells[i][1] != DEFAULT for i in range(*m.span()))]
+
+
 def entity_kinds():
-    """The kinds of entity named in @dabbrev-entities: coloured, camelcase,
-    capitalised (unset: all; empty: none)."""
+    """The kinds of entity named in @dabbrev-entities: coloured, words,
+    camelcase, capitalised (unset: all; empty: none)."""
     value = tmux('show-options', '-gqv', ENTITIES_OPTION)
     if value == '' and not tmux('show-options', '-gq', ENTITIES_OPTION):
         value = ENTITIES_DEFAULT
@@ -296,11 +317,16 @@ def entity_kinds():
 
 def entities(plain, escaped, kinds):
     """[(start, end)] in PLAIN of its entities of the KINDS (entity_kinds):
-    coloured spans (spans; ESCAPED is the line with its escapes), CamelCase
-    words, runs of Capitalised Words. In dabbrev they rank as one, before the
+    coloured spans (spans; ESCAPED is the line with its escapes), the words
+    in them and in faint lines (styled_words), CamelCase words, runs of
+    Capitalised Words. In dabbrev they rank as one, before the
     words; in copy mode y, p and r take the one under the cursor
     (tmux-link)."""
     found = spans(plain, escaped) if 'coloured' in kinds and escaped is not None else []
+    if 'words' in kinds and escaped is not None:
+        whole = list(found)                     # not a word that is a run but its punctuation (docs of docs/)
+        found += [(a, b) for a, b in styled_words(plain, escaped)
+                  if not any(x == a and not re.search(r'\w', plain[b:y]) for x, y in whole)]
     for kind, pattern in (('camelcase', CAMEL), ('capitalised', CAPITALISED)):
         if kind in kinds:
             found += [m.span() for m in pattern.finditer(plain)]
@@ -820,9 +846,18 @@ def anchored(pane, start, unit):
 # moving on with it.
 
 
+def present(after, close):
+    """Whether the closer CLOSE is there already in AFTER, the text after the
+    cursor: right after it, or after spaces only; but not a quote that begins
+    the next word (CLOSE "next"). Then it is not added again."""
+    rest = after.lstrip(' ')
+    return bool(close) and rest.startswith(close) and (
+        rest == after or not rest[len(close):len(close) + 1].isalnum())
+
+
 def closer(before, start, pairs):
     """The closer in PAIRS for the opener just before START in BEFORE, or ''.
-    (One already right after the cursor is not added: see start.)"""
+    (One already after the cursor is not added: see present.)"""
     opener = before[start - 1:start] if start else ''
     if opener in pairs and (start == 1 or before[start - 2].isspace() or before[start - 2] in pairs):
         return pairs[opener]
@@ -979,7 +1014,7 @@ class Pipe:
             snippet = Snippets().complete(pane.at(pane.before[:start] + target, pane.after), start, target)
             return (snippet[0]['text'], len(snippet[0]['text']) - snippet[0].get('back', 0)) if snippet else None
         close = pane.pairs()[target]
-        return (target, 1) if pane.after.startswith(close) else (target + close, 1)
+        return (target, 1) if present(pane.after, close) else (target + close, 1)
 
     def typed(self, pane, key):
         m = self.pattern(pane).search(pane.before)
@@ -1083,7 +1118,7 @@ class Screen:
             alts = anchored(pane, start, meant) if meant and not meant['start'] and meant['mark'] else []
         else:
             alts = anchored(pane, start, unit)
-        return alts or self.fallback(pane, start, typed)
+        return alts or self.fallback(pane, start, typed, unit)
 
     def unit_alts(self, pane, start, text):
         """The alternatives for one unit TEXT of a chain, typed from START."""
@@ -1105,7 +1140,7 @@ class Screen:
             view = pane.at(pane.before[:start] + prefix + text, suffix + pane.after)
             ustart = start + len(prefix)
             close = closer(view.before, ustart, pane.pairs()) if n and not text.startswith(',') else ''
-            tight = bool(close) and view.after.startswith(close)
+            tight = present(view.after, close)
             alts = self.unit_alts(view, ustart, text)
             if n == len(units) - 1:
                 chain = {'prefix': prefix, 'suffix': suffix, 'close': '' if tight else close, 'tight': tight}
@@ -1124,13 +1159,18 @@ class Screen:
         return {'text': chain['prefix'] + done + chain['suffix'], 'back': alt.get('back', 0) + len(chain['suffix']),
                 'chain': {**chain, 'unit': alt}}
 
-    def fallback(self, pane, start, typed):
+    def fallback(self, pane, start, typed, unit=None):
         """An operator with nothing of its kind matching is text: its last word
-        completed as any (-Wall, ^Howitzer, _private)."""
+        completed as any (-Wall, ^Howitzer, _private); but =WORD (UNIT) with
+        @dabbrev-entity-fallback word, without its =."""
         m = TYPED.search(typed)
         if not m:
             return []
-        return [{**alt, 'text': typed[:m.start()] + alt['text']}
+        keep = typed[:m.start()]
+        if (unit and unit['kind'] == 'mark' and unit['mark'] == '=' and
+                tmux('show-options', '-gqv', ENTITY_FALLBACK_OPTION).strip() == 'word'):
+            keep = keep[:unit['start']]
+        return [{**alt, 'text': keep + alt['text']}
                 for alt in self.words(pane, start + m.start(), m.group())]
 
     @staticmethod
@@ -1499,7 +1539,7 @@ def start(pane, key):
     if not alts:
         return getattr(backend, 'keeps_tab', False)
     close = closer(pane.before, found[0], pane.pairs()) if backend.name not in ('snippets', 'eval') else ''
-    tight = bool(close) and pane.after.startswith(close)     # it is there already (,rr's "|")
+    tight = present(pane.after, close)          # it is there already (,rr's "|")
     state = {'backend': backend.name, 'start': found[0],
              'close': '' if tight else close, 'tight': tight,
              # what was typed may go on past the cursor (eval's closing backtick)
@@ -1538,6 +1578,35 @@ def tab(pane):
         return
     if not start(pane, 'tab'):
         pane.send_tab()
+
+
+def steps_over(pane):
+    """Whether Tab before a closer (one of @tmux-tools-pairs right after the
+    cursor) steps over it: unless what is before the cursor asks for more, an
+    operator or chain (=tm, _The, 1. 2.), a snippet, a pipe, code, a path or
+    a word for the program; a word alone (or nothing) does not."""
+    if not pane.after or pane.after[0] not in set(pane.pairs().values()):
+        return False
+    for backend in BACKENDS:
+        found = backend.typed(pane, 'tab')
+        if found:
+            break
+    else:
+        return True
+    if backend.name != 'screen':
+        return False
+    marks = pane.marks()
+    chain, unit = parse_chain(found[1], marks), last_unit(found[1], marks)
+    return not (chain and not chain[0]) and not (unit and not unit['start'])
+
+
+def tab_step(pane):
+    """Tab as electric-pair hands it on with a closer right after the cursor
+    (@electric-pair-tab): over the closer (steps_over), else as Tab."""
+    if steps_over(pane):
+        tmux('send-keys', '-t', pane.pane, 'Right')
+    else:
+        tab(pane)
 
 
 def undo(pane):
@@ -1628,4 +1697,4 @@ if __name__ == '__main__':
         target = sys.argv[3] if len(sys.argv) > 3 else os.environ.get('TMUX_PANE', '')
         print('\n'.join(explain(Pane(target), sys.argv[2])))
     else:
-        {'expand': expand, 'tab': tab, 'undo': undo}[sys.argv[1]](Pane(sys.argv[2]))
+        {'expand': expand, 'tab': tab, 'tab-step': tab_step, 'undo': undo}[sys.argv[1]](Pane(sys.argv[2]))

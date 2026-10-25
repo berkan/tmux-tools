@@ -11,8 +11,10 @@
 #               typed again (once)
 #   BSpace      in an empty pair it typed, (|), takes both
 #   Tab         with a closer right after the cursor, steps over it: (hello|)
-#               to (hello)|; else does what it did before (dabbrev's
-#               completion). With @electric-pair-tab off, always the latter.
+#               to (hello)|; with dabbrev's Tab, dabbrev decides (tab-step:
+#               after an operator such as =tm|, a completion instead). Else
+#               Tab does what it did before (dabbrev's completion). With
+#               @electric-pair-tab off, always the latter.
 # Anything else is typed as it is.
 #
 # The pairs are the tools' shared ones (lib/pairs.py): the @tmux-tools-pairs
@@ -99,12 +101,12 @@ def around(pane, cy, cx=None):
 
 # Tab steps over a closer right after the cursor unless @electric-pair-tab is
 # off (read at each press); else it does what it did before, which is kept in
-# TAB_WAS (dabbrev's completion, say). When that is dabbrev's, a closing
-# backtick is left to it, to run the code before it (`date|`), unless
-# @dabbrev-eval is off.
+# TAB_WAS (dabbrev's completion, say). When that is dabbrev's, dabbrev
+# decides, by its tab-step: over the closer after a word, but after an
+# operator, a snippet or code (=tm|), a completion as its Tab.
 TAB_ON = '#{!=:#{@electric-pair-tab},off}'
 TAB_WAS = '@electric-pair-tab-was'
-DABBREV_EVALS = '#{==:#{@dabbrev-eval},off}'     # true when the backtick is stepped over
+DABBREV_TAB = re.compile(r'(tmux-dabbrev) tab ')
 
 # The pane option holding the places (|X:Y|...) where it left an empty pair:
 # BSpace there may take both, elsewhere it is BSpace with no process.
@@ -218,10 +220,9 @@ def bindings(script, programs, table, tab):
         lines.append(f'bind-key -n {quoted(ch)} if-shell -F {quoted(gate)} {{ {then} }} {{ {typed} }}')
         keys.append(ch)
     if closers:
-        dabbrev = 'tmux-dabbrev' in tab
-        steps = '#{&&:%s,#{&&:%s,%s}}' % (TAB_ON, gate, any_of([
-            '#{&&:%s,%s}' % (after(c), DABBREV_EVALS) if c == '`' and dabbrev else after(c) for c in closers]))
-        lines.append(f'bind-key -n Tab if-shell -F {quoted(steps)} {{ send-keys Right }} {{ {tab or "send-keys Tab"} }}')
+        steps = '#{&&:%s,#{&&:%s,%s}}' % (TAB_ON, gate, any_of([after(c) for c in closers]))
+        step = DABBREV_TAB.sub(r'\1 tab-step ', tab) if DABBREV_TAB.search(tab) else 'send-keys Right'
+        lines.append(f'bind-key -n Tab if-shell -F {quoted(steps)} {{ {step} }} {{ {tab or "send-keys Tab"} }}')
         in_empty = '#{&&:%s,#{&&:%s,#{m:*|#{cursor_x}:#{cursor_y}|*,#{%s}}}}' % (
             gate, any_of([after(c) for c in closers]), EMPTY)
         lines.append(f'bind-key -n BSpace if-shell -F {quoted(in_empty)} '

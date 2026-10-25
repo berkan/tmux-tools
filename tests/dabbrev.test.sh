@@ -827,6 +827,8 @@ ORDERED=(gamma x x 'gazebo gazebo' garden x gallop x)
 expect "frequent: the most often on screen first" 'gazebo gallop garden gamma ' "$(order frequent)"
 expect "  ... which the default is not" 'gallop garden gazebo gamma ' "$(order default)"
 tmux set -gu @dabbrev-order
+# The whole runs against the words: the words in the runs left out here.
+tmux set -g @dabbrev-entities 'coloured camelcase capitalised'
 editor $'before, \e[36mtranscribe\e[39m and a transcript' $'\e[38;5;105mTranscribe/_jobs/<b>.cell.py\e[39m here' \
     $'few lines \e[36mtranscribe\e[39m fills' $'so any transcript, and \e[1mtranscribe status <b>\e[0m tells'
 typed 'trans'; got=''
@@ -841,6 +843,13 @@ for _ in 1 2 3 4; do dab expand; got+="$(line)|"; done
 expect "  ... which may be another" \
     'transcribe |transcribe status <b> |Transcribe/_jobs/<b>.cell.py |transcript |' "$got"
 tmux set -gu @dabbrev-span-order
+tmux set -gu @dabbrev-entities
+editor $'before, \e[36mtranscribe\e[39m and a transcript' $'\e[38;5;105mTranscribe/_jobs/<b>.cell.py\e[39m here' \
+    $'few lines \e[36mtranscribe\e[39m fills' $'so any transcript, and \e[1mtranscribe status <b>\e[0m tells'
+typed 'trans'; got=''
+for _ in 1 2 3 4 5; do dab expand; got+="$(line)|"; done
+expect "  ... with the words in runs (the default): those after the whole runs, before the other words" \
+    'transcribe status <b> |transcribe |Transcribe/_jobs/<b>.cell.py |Transcribe/_jobs |transcript |' "$got"
 tmux set -g @dabbrev-order middle
 editor x x x x x gamma garden                         # rows 5 and 6: as far from the middle, 5.5
 typed 'ga'; dab expand
@@ -936,6 +945,28 @@ editor 'gamma'
 typed '`echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab
 expect "@dabbrev-eval engines, none named: Tab before the closing backtick steps over it" '`echo hi`|9' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-eval
+
+echo "a closer after the cursor, past spaces: there already, not added again"
+for t in '"hel| "|"hello| "' '(hel| )|(hello| )' '[hel|  ]|[hello|  ]'; do
+    IFS='|' read -r typed_text after want_line want_after <<<"$t"
+    editor 'say hello world here'
+    typed "$typed_text$after"; tmux send-keys -t "$PANE" -N "${#after}" Left; sleep 0.1; dab tab
+    expect "  ... $typed_text|$after" "$want_line$want_after" "$(line)"
+done
+editor 'say hello world here'
+typed '"hel "next"'; tmux send-keys -t "$PANE" -N 7 Left; sleep 0.1; dab tab
+expect '  ... but not a quote that begins the next word ("hel| "next")' '"hello"  "next"' "$(line)"
+
+echo "tab-step (electric-pair's Tab before a closer)"
+editor 'say hello world here' 'and Does When here'
+typed '(hel)'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
+expect "a word before the cursor: over the closer" '(hel)|5' "$(line)|$(cursor)"
+editor 'say hello world here' 'and Does When here'
+typed '(=Do)'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
+expect "an operator: completed, as Tab, against the closer" '(Does When)|10' "$(line)|$(cursor)"
+editor 'say hello world here' 'and Does When here'
+typed '(_say h)'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
+expect "  ... a sugar with words" '(say hello world here)|21' "$(line)|$(cursor)"
 
 echo "bind"
 tmux set -g @dabbrev-tab-commands 'python3 claude'

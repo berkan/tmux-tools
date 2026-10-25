@@ -228,20 +228,22 @@ python3 "$EP" bind
 editor; key '`' h Tab
 expect "  ... a backtick too" '`h`|' "$(line)"
 
-echo "Tab before a backtick, with dabbrev's Tab"
-# A stand-in tmux-dabbrev, whose Tab types D (dabbrev's would run the code).
-printf '#!/bin/sh\ntmux send-keys -t "$2" -l D\n' > "$SCRATCH/bin/tmux-dabbrev"
+echo "Tab before a closer, with dabbrev's Tab"
+# A stand-in tmux-dabbrev that types what it was asked: S for tab-step, T for tab.
+printf '#!/bin/sh\ncase $1 in tab-step) k=S ;; *) k=T ;; esac\ntmux send-keys -t "$2" -l $k\n' > "$SCRATCH/bin/tmux-dabbrev"
 chmod +x "$SCRATCH/bin/tmux-dabbrev"
 tmux bind-key -n Tab run-shell "$SCRATCH/bin/tmux-dabbrev tab '#{pane_id}'"
 python3 "$EP" bind
-editor; key '`' h Tab
-expect "goes to dabbrev, to run the code (\`h|\` + Tab)" '`hD|`' "$(line)"
 editor; key '(' h Tab
-expect "  ... other closers are stepped over still" '(h)|' "$(line)"
-tmux set -g @dabbrev-eval off
+expect "dabbrev decides, by its tab-step (an operator before the cursor: no step)" '(hS|)' "$(line)"
 editor; key '`' h Tab
-expect "  ... but with @dabbrev-eval off, stepped over" '`h`|' "$(line)"
-tmux set -gu @dabbrev-eval
+expect "  ... a backtick too (code before it: run)" '`hS|`' "$(line)"
+editor; key h Tab
+expect "  ... with no closer after the cursor, Tab as it was" 'hT|' "$(line)"
+tmux set -g @electric-pair-tab off
+editor; key '(' h Tab
+expect "  ... @electric-pair-tab off: Tab as it was, closer or not" '(hT|)' "$(line)"
+tmux set -gu @electric-pair-tab
 tmux unbind-key -n Tab
 python3 "$EP" bind
 
@@ -290,6 +292,10 @@ editor; key '`' e x i t ' ' 3 Tab
 expect "  ... a failure: left as it was" '`exit 3|`' "$(line)"
 editor; key '(' h e l l o Tab
 expect "(hello| + Tab steps over still" '(hello)|' "$(line)"
+editor; key r e : ' ' '"' = z z Tab
+expect 're: "=zz| + Tab: an operator, so no step (here nothing to complete)' 're: "=zz|"' "$(line)"
+editor; key '(' _ z z Tab
+expect "  ... (_zz| the same" '(_zz|)' "$(line)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

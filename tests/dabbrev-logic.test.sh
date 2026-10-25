@@ -318,6 +318,51 @@ OPTIONS['@dabbrev-hints'] = '5000'
 check('  ... a number: so many milliseconds', d.hint_time() == 5000, d.hint_time())
 del OPTIONS['@dabbrev-hints']
 
+print('words in a styled run (@dabbrev-entities words)')
+def styled_alts(escaped_rows, before, key='tab'):
+    """The alternatives with ESCAPED_ROWS on screen (their escapes kept)."""
+    plain = [d.ESCAPE.sub('', r) for r in escaped_rows]
+    pane = Pane(plain, before)
+    pane._escaped = list(escaped_rows) + [pane.screen[-1]]
+    pane._kinds = None
+    for backend in d.BACKENDS:
+        found = backend.typed(pane, key)
+        if found:
+            return [alt['text'] for alt in backend.complete(pane, *found)]
+FAINT = ['\x1b[2mBash(tmux list-keys)\x1b[0m', 'plain tmuxing here']
+got = styled_alts(FAINT, '"=tm')
+check('=tm: tmux, a word in a faint line (no entity of its own)', got[:1] == ['tmux '], got)
+got = styled_alts(['say \x1b[33mtmux list-keys\x1b[0m now'], '=li')
+check('  ... and in a coloured run that is one', got[:1] == ['list-keys '], got)
+got = styled_alts(['say \x1b[33mtmux list-keys\x1b[0m now'], '=tm')
+check('  ... the whole run first', got[:1] == ['tmux list-keys '], got)
+check('words is one of the default kinds', 'words' in d.ENTITIES_DEFAULT.split(), d.ENTITIES_DEFAULT)
+got = styled_alts(['see \x1b[36mdocs/\x1b[0m here'], '=do')
+check('  ... not a word that is a whole run but its punctuation (docs of docs/)', got == ['docs/ '], got)
+OPTIONS['@dabbrev-entities'] = 'coloured camelcase capitalised'
+got = styled_alts(FAINT, '"=tm')
+check('without words: =tm is text, its word completed (=tmux, the = kept)', got[:1] == ['=tmux '], got)
+OPTIONS['@dabbrev-entity-fallback'] = 'word'
+got = styled_alts(FAINT, '"=tm')
+check('  ... @dabbrev-entity-fallback word: the = dropped', got[:1] == ['tmux '], got)
+got = styled_alts(FAINT, '-tm')
+check('  ... only for =: -tm keeps its mark', got[:1] == ['-tmux '], got)
+del OPTIONS['@dabbrev-entity-fallback'], OPTIONS['@dabbrev-entities']
+
+print('tab-step: Tab before a closer steps over it, but after an operator')
+def steps(before, after=')'):
+    return d.steps_over(Pane(MD, before, after))
+check('(hel|): a word, steps over', steps('(hel'), steps('(hel'))
+check('(|): nothing, steps over', steps('('), steps('('))
+check('(=Do|): an operator, does not', not steps('(=Do'), steps('(=Do'))
+check('(_The o|): a sugar with words', not steps('(_The o'), steps('(_The o'))
+check('(1. 2.|): a chain', not steps('(1. 2.'), steps('(1. 2.'))
+check('(,re|): a snippet', not steps('(,re'), steps('(,re'))
+check('(~/de|): a path', not steps('(~/de'), steps('(~/de'))
+check('`echo hi|`: code', not steps('`echo hi', '`'), steps('`echo hi', '`'))
+check('nothing after the cursor: no step', not steps('(hel', ''), steps('(hel', ''))
+check('not a closer after the cursor: no step', not steps('(hel', 'x'), steps('(hel', 'x'))
+
 print('explain')
 pane = Pane(LISTS, '')
 lines = d.explain(pane, '1., -Wh')

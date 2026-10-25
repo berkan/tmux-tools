@@ -86,7 +86,8 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-tab-commands` | programs in which Tab completes, by `#{pane_current_command}`, each a regular expression for the whole name [`claude codex pi node agy gemini [0-9.]+`: Claude Code on macOS is named for its version]; `''` leaves Tab alone |
 | `@dabbrev-order` | the order of words that rank alike [`middle`: nearest the middle of the screen]; also `frequent`, `cursor`, `top` |
 | `@dabbrev-span-order` | the same for entities [`middle`] |
-| `@dabbrev-entities` | what counts as one thing on screen [`coloured camelcase capitalised`]: runs of text in a style of their own, CamelCase words, runs of Capitalised Words; `''` for none |
+| `@dabbrev-entities` | what counts as one thing on screen [`coloured words camelcase capitalised`]: runs of text in a style of their own, the words in them and in a faint or grey line (`tmux` in a dim `Bash(tmux list-keys)`), CamelCase words, runs of Capitalised Words; `''` for none |
+| `@dabbrev-entity-fallback` | `=word` with no entity starting so is text, its word completed as any (`=tm` → `=tmux`) [`text`]; `word`: the same without the `=` (`tmux`) |
 | `@dabbrev-ruby-ranges` | `..` takes the end and `...` stops before it, as Ruby's ranges [on]; `off`: both take it |
 | `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
 | `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
@@ -99,7 +100,9 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-hints` | after each press, what `M-/` cycles to, in the status line: `M-/ 1/3: [docs/] · docs/design.md · docs/evidence/` [on: for 3 seconds]; a number: so many milliseconds; `off` |
 
 Entities come before words. A completion after an opening quote or bracket
-is closed with its pair (`"hel` → `"hello" `; the pairs of `@tmux-tools-pairs`).
+is closed with its pair (`"hel` → `"hello" `; the pairs of `@tmux-tools-pairs`),
+unless the closer is after the cursor already, right after it or past spaces
+(`"hel| "` → `"hello| "`), but not a quote that begins the next word.
 
 ### link
 
@@ -157,7 +160,7 @@ input, so it goes by what the screen shows either side of the cursor.
 | a closer, or a quote, with the same right after the cursor | steps over it |
 | a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
 | `BSpace` in an empty pair it typed | takes both |
-| `Tab` with a closer right after the cursor | steps over it: `(hello\|)` to `(hello)\|`; elsewhere Tab does what it did (dabbrev's completion); a closing backtick is left to dabbrev, to run the code before it (unless `@dabbrev-eval` is `off`) |
+| `Tab` with a closer right after the cursor | steps over it after a word: `(hello\|)` to `(hello)\|`; but after an operator, a snippet, a pipe, code, a path (`re: "=tm\|"`, `` `date\|` ``) it completes, as dabbrev's Tab: `re: "tmux\|"`; elsewhere Tab does what it did (dabbrev's completion) |
 
 | option | |
 |---|---|
@@ -166,10 +169,13 @@ input, so it goes by what the screen shows either side of the cursor.
 | `@electric-pair-tab` | `off`: Tab before a closer completes too [on: it steps over]; read at each press, so `tmux set -g @electric-pair-tab off` applies at once |
 
 With Tab stepping over, `(hel|)` + Tab steps out rather than completing
-`hel`; `M-/` completes it. With it off, Tab completes there, ending against
-the closer, `(hello|)`, and Tab again adds the next word; `)` steps out.
-electric-pair binds Tab around whatever Tab was bound to, so
-`tmux-tools.tmux` binds it after the other tools.
+`hel`; `M-/` completes it, or `(=hel|)` + Tab (an operator asks for a
+completion). With it off, Tab completes there, ending against the closer,
+`(hello|)`, and Tab again adds the next word; `)` steps out. Which it is,
+after what, dabbrev decides (`tmux-dabbrev tab-step`), when the Tab
+electric-pair binds around is dabbrev's; without dabbrev, Tab before a
+closer steps over it. electric-pair binds Tab around whatever Tab was bound
+to, so `tmux-tools.tmux` binds it after the other tools.
 
 Typing stays quick: a closer, and Backspace but in an empty pair, are
 decided by tmux itself, with no process; an opener or quote that may pair,
