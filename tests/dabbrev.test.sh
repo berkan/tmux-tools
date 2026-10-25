@@ -542,6 +542,24 @@ editor 'hello world here'
 typed '_h'; dab tab; typed '|('; dab tab
 expect "  ... @dabbrev-pipe-completion off: the word before the |" 'hello world (here)|18' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-pipe-completion
+editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
+typed 'doc'; dab tab
+expect "a completion ending in / (a coloured span): the space after it" 'docs/ ' "$(line)"
+tmux set -g @dabbrev-slash-open on
+editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
+typed 'doc'; dab tab
+expect "  ... @dabbrev-slash-open on: none, as after a folder" 'docs/|5' "$(line)|$(cursor)"
+typed 'd'; dab tab
+expect "  ... so that typing on narrows it" 'docs/design.md ' "$(line)"
+editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
+typed 'doc'; dab tab tab
+expect "  ... Tab again: what starts with it, as in a folder" 'docs/design.md ' "$(line)"
+dab undo
+expect "  ... undo: back to it" 'docs/' "$(line)"
+editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
+typed '"doc'; dab tab
+expect "  ... after a quote: left open too" '"docs/' "$(line)"
+tmux set -gu @dabbrev-slash-open
 editor "${CHAIN[@]}"
 typed '"1., 2.'; dab tab
 expect "  ... after a quote: the chain closed" '"1. First thing, 2. Second thing" ' "$(line)"

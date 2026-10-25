@@ -119,6 +119,7 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 # ... stops before it (...Then, .... a sentence without its full stop).
 RUBY_OPTION = '@dabbrev-ruby-ranges'
 PIPE_COMPLETION_OPTION = '@dabbrev-pipe-completion'
+SLASH_OPTION = '@dabbrev-slash-open'
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
 PART_END = re.compile(r'\n[ \t]*(?:\n|\W*?(?:[-*•+]|\d+[.)])\s)')        # or a list item
 SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev/snippets'
@@ -832,7 +833,8 @@ def shown(state):
     the cursor BACK characters before its end: the chosen alternative of the
     last level, or with none chosen, the level's own (what was typed, or what
     the level goes on from); closed (closer) when the state says so, unless
-    it holds the closer already."""
+    it holds the closer already. One that ends in / is left open (OPEN, from
+    @dabbrev-slash-open): without its space, not closed."""
     level = state['levels'][-1]
     if level['index'] < len(level['alts']):
         alt = level['alts'][level['index']]
@@ -841,6 +843,8 @@ def shown(state):
         text, back = level['none'], 0
     else:                                       # what was typed, as it was
         return level['none'], state.get('typed_back', 0)
+    if state.get('open') and not back and text.endswith('/ '):
+        return text[:-1], back
     return closed(text, back, state.get('close', ''), state.get('tight')), back
 
 
@@ -1463,6 +1467,7 @@ def start(pane, key):
              'close': '' if tight else close, 'tight': tight,
              # what was typed may go on past the cursor (eval's closing backtick)
              'typed_back': len(pane.before[:found[0]] + found[1]) - len(pane.before),
+             'open': tmux('show-options', '-gqv', SLASH_OPTION).strip() == 'on',
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
     step(pane, state, lambda levels: levels[-1].update(index=0))
     return True
@@ -1481,6 +1486,8 @@ def expand(pane):
 
 def tab(pane):
     state = pane.state()
+    if state and state.get('open') and shown(state)[0].endswith('/'):
+        state = None                            # left open: Tab completes what starts with it
     if state:
         level = state['levels'][-1]
         if level['index'] == len(level['alts']):        # none chosen: the first

@@ -95,6 +95,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
 | `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |
 | `@dabbrev-pipe-completion` | right after a completion (`_h` + Tab, then `\|(` + Tab), the pipe's LEFT is that completion, whole: `(hello world)` [on]; `off`: as anywhere else (below) |
+| `@dabbrev-slash-open` | `on`: a completion that ends in `/` (a coloured `docs/`) ends there, without the space and not closed, as a folder does; typing on narrows it, and Tab completes what starts with it (`docs/design.md`) [off] |
 
 Entities come before words. A completion after an opening quote or bracket
 is closed with its pair (`"hel` → `"hello" `; the pairs of `@tmux-tools-pairs`).
