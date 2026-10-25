@@ -296,6 +296,28 @@ OPTIONS['@dabbrev-eval'] = 'off'
 not_run('@dabbrev-eval off: not run', '`sh echo hi`')
 del OPTIONS['@dabbrev-eval']
 
+print('hints (@dabbrev-hints): what M-/ cycles to')
+ALTS = [{'text': 'docs/ '}, {'text': 'docs/design.md '}, {'text': 'docs/evidence/ '}]
+state = lambda index, alts=ALTS: {'levels': [{'none': '=doc', 'alts': alts, 'index': index}]}
+got = d.hint(state(0), 'M-/')
+check('the alternatives, the one typed in brackets', got == 'M-/ 1/3: [docs/] · docs/design.md · docs/evidence/', got)
+got = d.hint(state(3), 'M-/')
+check('  ... past the last: what was typed', got == 'M-/ -/3: docs/ · docs/design.md · docs/evidence/ · [=doc]', got)
+got = d.hint(state(0, ALTS[:1]), 'M-/')
+check('  ... one alone: none', got is None, got)
+got = d.hint(state(1, [{'text': 'x' * 80 + ' '}, {'text': 'short '}]), 'M-/')
+check('  ... a long one shortened', got == 'M-/ 2/2: ' + 'x' * 39 + '… · [short]', got)
+got = d.hint(state(0, [{'text': 'a#b '}, {'text': 'c '}]), 'M-/')
+check('  ... # kept as it is (not a tmux format)', got == 'M-/ 1/2: [a##b] · c', got)
+check('the time: on by default, 3 seconds', d.hint_time() == 3000, d.hint_time())
+OPTIONS['@dabbrev-hints'] = 'off'
+check('  ... off: none', d.hint_time() is None, d.hint_time())
+OPTIONS['@dabbrev-hints'] = '0'
+check('  ... 0: none', d.hint_time() is None, d.hint_time())
+OPTIONS['@dabbrev-hints'] = '5000'
+check('  ... a number: so many milliseconds', d.hint_time() == 5000, d.hint_time())
+del OPTIONS['@dabbrev-hints']
+
 print('explain')
 pane = Pane(LISTS, '')
 lines = d.explain(pane, '1., -Wh')

@@ -560,6 +560,11 @@ editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
 typed '"doc'; dab tab
 expect "  ... after a quote: left open too" '"docs/' "$(line)"
 tmux set -gu @dabbrev-slash-open
+tmux set -g @dabbrev-hints off
+editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
+typed 'doc'; dab tab expand
+expect "@dabbrev-hints off: typing as with them (on by default, no client here to show them)" 'docs/design.md ' "$(line)"
+tmux set -gu @dabbrev-hints
 editor "${CHAIN[@]}"
 typed '"1., 2.'; dab tab
 expect "  ... after a quote: the chain closed" '"1. First thing, 2. Second thing" ' "$(line)"
