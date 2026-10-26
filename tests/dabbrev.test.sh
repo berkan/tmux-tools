@@ -968,6 +968,33 @@ editor 'say hello world here' 'and Does When here'
 typed '(_say h)'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
 expect "  ... a sugar with words" '(say hello world here)|21' "$(line)|$(cursor)"
 
+echo "spell (M-\$)"
+printf '%s\n' the thing thin think is here a > "$SCRATCH/words"
+tmux set -g @dabbrev-spell-checker words
+tmux set -g @dabbrev-spell-words "$SCRATCH/words"
+editor 'nothing here'
+typed 'the tihng'; dab spell
+expect "corrects the word before the cursor" 'the thing|9' "$(line)|$(cursor)"
+dab expand
+expect "  ... M-/: the next correction" 'the thin|8' "$(line)|$(cursor)"
+dab spell
+expect "  ... M-\$ again: the same" 'the think|9' "$(line)|$(cursor)"
+dab undo
+expect "  ... M-?: takes it back" 'the thin|8' "$(line)|$(cursor)"
+editor 'nothing here'
+typed 'the tihng is here'; dab spell
+expect "a word further back, the cursor where it was" 'the thing is here|17' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo: as typed" 'the tihng is here|17' "$(line)|$(cursor)"
+editor 'nothing here'
+typed 'the tihng is'; tmux send-keys -t "$PANE" Left Left Left Left Left; sleep 0.1; dab spell
+expect "the cursor inside the word: the word, the cursor after it" 'the thing is|9' "$(line)|$(cursor)"
+editor 'a thing here'
+typed 'the tihng'; dab spell; typed ' he'; dab tab
+expect "Tab after it completes afresh" 'the thing here ' "$(line)"
+tmux set -gu @dabbrev-spell-checker
+tmux set -gu @dabbrev-spell-words
+
 echo "bind"
 tmux set -g @dabbrev-tab-commands 'python3 claude'
 python3 "$DAB" bind
@@ -975,6 +1002,8 @@ expect "M-/ runs it, in the foreground (keys typed after it wait)" 1 \
     "$(tmux list-keys -T root | grep -cE "root +M-/ +run-shell \"[^ ]*tmux-dabbrev expand '#\{pane_id\}'\"")"
 expect "M-? undoes" 1 \
     "$(tmux list-keys -T root | grep -cE "root +M-\\? +run-shell \"[^ ]*tmux-dabbrev undo '#\{pane_id\}'\"")"
+expect "M-\$ corrects the spelling" 1 \
+    "$(tmux list-keys -T root | grep -cE "root +.?M-\\$.? +run-shell \"[^ ]*tmux-dabbrev spell '#\{pane_id\}'\"")"
 expect "Tab runs it in the configured programs, else is sent on" 1 \
     "$(tmux list-keys -T root | grep -F 'Tab' | grep -F 'python3|claude' | grep -F 'tmux-dabbrev tab' | grep -c 'send-keys Tab')"
 tmux set -g @dabbrev-key M-.

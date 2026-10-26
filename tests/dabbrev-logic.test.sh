@@ -363,6 +363,68 @@ check('`echo hi|`: code', not steps('`echo hi', '`'), steps('`echo hi', '`'))
 check('nothing after the cursor: no step', not steps('(hel', ''), steps('(hel', ''))
 check('not a closer after the cursor: no step', not steps('(hel', 'x'), steps('(hel', 'x'))
 
+print('spell (M-$): the misspelled word before the cursor, corrected')
+WORDS = os.path.join(scratch, 'words')
+with open(WORDS, 'w') as f:
+    f.write('\n'.join(['the', 'thing', 'things', 'think', 'thin', 'is', 'here', 'a', 'do', 'it', "it's", 'and',
+                       'well', 'known', 'see', 'tea', 'ten', 'run', 'now', 'Paris']) + '\n')
+OPTIONS['@dabbrev-spell-checker'], OPTIONS['@dabbrev-spell-words'] = 'words', WORDS
+def spelt(before, rows=(), after=''):
+    """What spell finds before the cursor: (where the word starts in what
+    follows '> ', what each correction puts in, how far the typed text goes
+    past the cursor), or the message it shows."""
+    got = d.spelling(Pane(rows, before, after))
+    if isinstance(got, str):
+        return got
+    return got['start'] - 2, [alt['text'] for alt in got['alts']], got['typed_back']
+got = spelt('do the tihng')
+check('the word before the cursor: its corrections', got[0] == 7 and got[1][:1] == ['thing'], got)
+check('  ... a swap of two letters first (tihng: thing before thin)', got[1].index('thing') < got[1].index('thin'), got)
+got = spelt('the tihng is here ')
+check('a word further back: the words after it typed again', got[0] == 4 and got[1][:1] == ['thing is here '], got)
+got = spelt('the thing is here')
+check('nothing misspelled: said so', isinstance(got, str) and 'no misspelled word' in got, got)
+got = spelt('Tihng')
+check('the case as typed: Tihng → Thing', got[1][:1] == ['Thing'], got)
+got = spelt('THE TIHNG')
+check('  ... TIHNG → THING', got[1][:1] == ['THING'], got)
+got = spelt('ti', after='hng and')
+check('the cursor inside the word: the whole word, the cursor after it', got[0] == 0 and got[2] == 3 and got[1][:1] == ['thing'], got)
+got = spelt('see ~/tihng foo_tihng tihng.py x2tihng http://tihng.com')
+check('paths, identifiers, file names, words with digits: not checked', isinstance(got, str), got)
+got = spelt('well-knwon')
+check('a hyphenated word: each part (knwon in well-knwon)', got[0] == 5 and got[1][:1] == ['known'], got)
+got = spelt("it's tihng,")
+check('punctuation after the word stays', got[1][:1] == ['thing,'], got)
+got = spelt('see Paris')
+check('a word known with its capital is correct', isinstance(got, str), got)
+got = spelt('run dabrev now', rows=['the tmux-dabbrev tool'])
+check('a word on screen near it (dabbrev, not a dictionary word) is a correction', got[1][:1] == ['dabbrev now'], got)
+got = spelt('xqzvbnw')
+check('no correction: said so', isinstance(got, str) and 'xqzvbnw' in got, got)
+OPTIONS['@dabbrev-spell-words'] = os.path.join(scratch, 'none')
+got = spelt('tihng')
+check('no word list: said so', isinstance(got, str) and 'no spell checker' in got, got)
+FAKE = os.path.join(scratch, 'fake-aspell')
+with open(FAKE, 'w') as f:                      # ispell -a, as aspell and hunspell speak it
+    f.write('import sys\nprint("@(#) International Ispell Version 3.1.20 (but really Fake)", flush=True)\n'
+            'for line in sys.stdin:\n'
+            '    for w in line[1:].split():\n'
+            '        print("& tihng 2 0: thing, tiding" if w == "tihng" else "*" if w.isalpha() else "# " + w + " 0")\n'
+            '    print(flush=True)\n')
+OPTIONS['@dabbrev-spell-checker'] = f'python3 {FAKE}'
+got = spelt('the tihng is')
+check('a checker (ispell -a): its corrections, in its order', got[1] == ['thing is', 'tiding is'], got)
+got = spelt('the thing is')
+check('  ... its correct words', isinstance(got, str) and 'no misspelled word' in got, got)
+OPTIONS['@dabbrev-spell-checker'] = 'no-such-checker -a'
+got = spelt('tihng')
+check('  ... not found: said so', isinstance(got, str) and 'no-such-checker' in got, got)
+del OPTIONS['@dabbrev-spell-checker'], OPTIONS['@dabbrev-spell-words']
+got = d.hint({'levels': [{'none': 'tihng is', 'label': 'tihng', 'index': 0,
+                          'alts': [{'text': 'thing is', 'label': 'thing'}, {'text': 'thin is', 'label': 'thin'}]}]}, 'M-/')
+check('the hint: the words, not what follows them', got == 'M-/ 1/2: [thing] · thin', got)
+
 print('explain')
 pane = Pane(LISTS, '')
 lines = d.explain(pane, '1., -Wh')

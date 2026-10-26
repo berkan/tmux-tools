@@ -91,15 +91,23 @@
 #                 (steps_over).
 #   undo (M-?)    take back the last press; again, the one before, back to
 #                 what was typed.
+#   spell (M-$)   correct the last misspelled word left of the cursor on its
+#                 row (or the one it is in), the text after it typed again:
+#                 the corrections of @dabbrev-spell-checker (one that speaks
+#                 ispell -a; unset: aspell, else hunspell, else words: the
+#                 list in @dabbrev-spell-words), and the words on screen near
+#                 it that it does not know, the nearest first. Again, or M-/,
+#                 the next; past the last, the word as it was (spelling).
 #
 # A press goes on from the last one while the program, the cursor's row and
 # the text left of the cursor are as the last one left them; else it starts
 # afresh. The state is kept in a file per pane under $TMPDIR (a tmux option
 # cannot hold it: one command carries at most about 16 KB).
 #
-#   tmux-dabbrev bind   bind the keys in @dabbrev-key (default M-/) and
-#       @dabbrev-undo-key (default M-?) without the prefix, and Tab in the
-#       programs named in @dabbrev-tab-commands (by #{pane_current_command},
+#   tmux-dabbrev bind   bind the keys in @dabbrev-key (default M-/),
+#       @dabbrev-undo-key (default M-?) and @dabbrev-spell-key (default M-$)
+#       without the prefix, and Tab in the programs named in
+#       @dabbrev-tab-commands (by #{pane_current_command},
 #       each a regular expression for the whole name, with no , or };
 #       empty: Tab is left alone); run it from tmux.conf after setting them.
 #       All run in the foreground, so keys typed meanwhile wait and stay in
@@ -109,6 +117,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -153,7 +162,17 @@ ENTITIES_OPTION, ENTITIES_DEFAULT = '@dabbrev-entities', 'coloured words camelca
 # with word, the word without the = (tmux).
 ENTITY_FALLBACK_OPTION = '@dabbrev-entity-fallback'
 CAPITALISED = re.compile(r"(?<![\w'’-])[A-Z][\w'’-]+(?: [A-Z][\w'’-]+)+(?![\w'’-])")
-KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?')}
+KEYS = {'expand': ('@dabbrev-key', 'M-/'), 'undo': ('@dabbrev-undo-key', 'M-?'),
+        'spell': ('@dabbrev-spell-key', 'M-$')}
+# spell (M-$): a checker that speaks ispell -a (aspell, hunspell), or words
+# (the word list); unset, aspell or hunspell if installed, else words.
+SPELL_OPTION, SPELL_CHECKERS = '@dabbrev-spell-checker', ('aspell', 'hunspell')
+SPELL_WORDS_OPTION, SPELL_WORDS_DEFAULT = '@dabbrev-spell-words', '/usr/share/dict/words'
+SPELL_MAX, SPELL_TIMEOUT = 8, 5                 # corrections offered; seconds the checker may take
+LETTERS = r"[^\W\d_]+(?:['’][^\W\d_]+)*"         # a word to check: letters, ' inside
+# One a token of its own (between spaces): words joined by -, in brackets,
+# quotes or punctuation; not a path, an identifier, a file name, a number.
+SPELL_TOKEN = re.compile(rf"""(?<!\S)[(\[{{"'“‘]*({LETTERS}(?:-{LETTERS})*)[)\]}}"'”’.,;:!?…]*(?!\S)""")
 # Claude Code on macOS is named for its version (2.1.310).
 TAB_OPTION, TAB_DEFAULT = '@dabbrev-tab-commands', 'claude codex pi node agy gemini [0-9.]+'
 CONTEXT = 3                     # words before what was typed that rank a match
@@ -890,12 +909,12 @@ def hint(state, key):
     in brackets, each cut to HINT_WIDTH; None with one alone. # doubled, as
     display-message reads formats."""
     level = state['levels'][-1]
-    alts = [alt['text'].strip() for alt in level['alts']]
+    alts = [alt.get('label', alt['text']).strip() for alt in level['alts']]
     if len(alts) < 2:
         return None
     index = level['index']
     if index == len(alts):
-        alts.append(level['none'])
+        alts.append(level.get('label', level['none']))
     cut = [a if len(a) <= HINT_WIDTH else a[:HINT_WIDTH - 1] + '…' for a in alts]
     shown = ' · '.join(f'[{a}]' if i == index else a for i, a in enumerate(cut))
     place = str(index + 1) if index < len(level['alts']) else '-'
@@ -1371,6 +1390,187 @@ BACKENDS = [Eval(), Pipe(), Snippets(), Paths(), Program(), Screen()]
 BY_NAME = {backend.name: backend for backend in BACKENDS}
 
 
+# spell (M-$): not a backend (nothing typed asks for it), but its corrections
+# are a level as theirs are, so that M-/ cycles them and M-? takes them back.
+
+def distance(a, b):
+    """The letters to swap (two side by side), drop, add or change to turn A
+    into B, case aside (optimal string alignment)."""
+    a, b = a.lower(), b.lower()
+    rows = [list(range(len(b) + 1))]
+    for i in range(1, len(a) + 1):
+        row = [i] + [0] * len(b)
+        for j in range(1, len(b) + 1):
+            row[j] = min(rows[-1][j] + 1, row[j - 1] + 1, rows[-1][j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                row[j] = min(row[j], rows[-2][j - 2] + 1)
+        rows.append(row)
+    return rows[-1][-1]
+
+
+def cased(typed, word):
+    """WORD in TYPED's case: all capitals, or a capital first; else as it is."""
+    if len(typed) > 1 and typed.isupper():
+        return word.upper()
+    if typed[:1].isupper():
+        return word[:1].upper() + word[1:]
+    return word
+
+
+class WordList:
+    """A list of words, one a line: those in it are correct, and those one or
+    two edits away (letters swapped, dropped, changed, added; in that order)
+    the corrections."""
+    def __init__(self, path):
+        with open(path, encoding='utf-8', errors='replace') as f:
+            self.words = set(f.read().split())
+        self.forms = {}                         # lower case: the form listed (Paris), a lower one first
+        for w in sorted(self.words, key=lambda w: w != w.lower()):
+            self.forms.setdefault(w.lower(), w)
+
+    def correct(self, word):
+        return any(w in self.words for w in (word, word.lower(), word[:1] + word[1:].lower()))
+
+    @staticmethod
+    def edits(word, alphabet):
+        splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
+        return ([a + b[1] + b[0] + b[2:] for a, b in splits if len(b) > 1] +
+                [a + b[1:] for a, b in splits if b] +
+                [a + c + b[1:] for a, b in splits if b for c in alphabet] +
+                [a + c + b for a, b in splits for c in alphabet])
+
+    def suggest(self, word):
+        lower = word.lower()
+        alphabet = sorted(set("abcdefghijklmnopqrstuvwxyz'" + lower))
+        near = self.edits(lower, alphabet)
+        out = dict.fromkeys(e for e in near if e in self.forms)
+        if len(lower) <= 12:                    # two edits of a long word: too many to try
+            out.update(dict.fromkeys(e2 for e in near for e2 in self.edits(e, alphabet) if e2 in self.forms))
+        out.pop(lower, None)
+        return [self.forms[w] for w in out]
+
+    def check(self, words):
+        return {w: None if self.correct(w) else self.suggest(w) for w in words}
+
+
+class Ispell:
+    """A checker that speaks ispell -a, as aspell -a and hunspell -a do."""
+    def __init__(self, command):
+        self.command = command
+
+    def check(self, words):
+        """{word: None if correct, else its corrections}; on a failure the
+        message (a str)."""
+        argv = shlex.split(self.command)
+        words = list(dict.fromkeys(words))
+        try:
+            proc = subprocess.run(argv, input=''.join(f'^{w}\n' for w in words), text=True,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=SPELL_TIMEOUT)
+        except FileNotFoundError:
+            return f'{argv[0]}: not found (@dabbrev-spell-checker)'
+        except subprocess.TimeoutExpired:
+            return f'{argv[0]}: no answer after {SPELL_TIMEOUT} s'
+        lines = proc.stdout.split('\n')[1:]     # after the version line, a result a word, then a blank
+        if proc.returncode or not lines:
+            err = [line for line in proc.stderr.splitlines() if line.strip()]
+            return f'{argv[0]}: ' + (err[0] if err else f'exit {proc.returncode}')
+        out, results = {}, iter(lines)
+        for w in words:
+            result = ''
+            for line in results:
+                if not line:
+                    break
+                result = result or line
+            if result[:1] in ('&', '?'):        # & word count offset: correction, ...
+                out[w] = [s.strip() for s in result.split(':', 1)[1].split(',') if s.strip()]
+            else:                               # * + - correct; # none
+                out[w] = None if result[:1] in ('*', '+', '-', '') else []
+        return out
+
+
+def spell_checker():
+    """The checker @dabbrev-spell-checker names; else aspell or hunspell, the
+    first installed; else the word list (@dabbrev-spell-words). A str says
+    why there is none."""
+    choice = tmux('show-options', '-gqv', SPELL_OPTION).strip()
+    if choice not in ('', 'words'):
+        return Ispell(choice)
+    if not choice:
+        for name in SPELL_CHECKERS:
+            if shutil.which(name):
+                return Ispell(f'{name} -a')
+    path = os.path.expanduser(tmux('show-options', '-gqv', SPELL_WORDS_OPTION).strip() or SPELL_WORDS_DEFAULT)
+    try:
+        return WordList(path)
+    except OSError:
+        return f'no spell checker: no aspell or hunspell, and no word list at {path} (@dabbrev-spell-words)'
+
+
+def spelling(pane):
+    """The corrections of the misspelled word nearest the cursor on its row,
+    left of it (or the word it is in): {'start', 'none' (the text from the
+    word to the cursor, or to the word's end when the cursor is inside it),
+    'typed_back' (how far that goes past the cursor), 'label' (the word),
+    'alts': [{'text': none with the word corrected, 'label': the correction}]};
+    or what to say instead (a str). The corrections are the checker's and the
+    words on screen near it that the checker does not know (a name, a term),
+    the nearest first, those on screen before the checker's at the same
+    distance."""
+    tail = re.match(r'[^\W\d_]*', pane.after).group() if pane.before[-1:].isalpha() else ''
+    line = pane.before + tail
+    found = []                                  # (start, end) of each word, in tokens of their own
+    for m in SPELL_TOKEN.finditer(line):
+        found += [(m.start(1) + w.start(), m.start(1) + w.end()) for w in re.finditer(LETTERS, m.group(1))]
+    if not found:
+        return 'no word to check before the cursor'
+    checker = spell_checker()
+    if isinstance(checker, str):
+        return checker
+    verdicts = checker.check(line[a:b] for a, b in found)
+    if isinstance(verdicts, str):
+        return verdicts
+    wrong = [(a, b) for a, b in found if verdicts[line[a:b]] is not None]
+    if not wrong:
+        return 'no misspelled word before the cursor'
+    a, b = wrong[-1]
+    word = line[a:b]
+    on_screen = {w for row in pane.screen for w in re.findall(LETTERS, row)
+                 if len(w) > 2 and w.lower() != word.lower() and abs(len(w) - len(word)) <= 2}
+    near = [w for w in on_screen if distance(word, w) <= (1 if len(word) <= 4 else 2)]
+    if near:
+        known = checker.check(near)
+        near = [w for w in near if not isinstance(known, str) and known[w] is not None]
+    ranked = sorted([(distance(word, w), 0, w) for w in sorted(near)] +
+                    [(distance(word, w), 1, w) for w in verdicts[word]], key=lambda r: r[:2])
+    fixes = []
+    for _, source, w in ranked:
+        w = cased(word, w) if source or w == w.lower() else w
+        if w not in fixes and w != word:
+            fixes.append(w)
+    if not fixes:
+        return f'{word}: no correction'
+    return {'start': a, 'none': line[a:], 'typed_back': len(tail), 'label': word,
+            'alts': [{'text': w + line[b:], 'label': w} for w in fixes[:SPELL_MAX]]}
+
+
+def spell(pane):
+    """Correct the misspelled word nearest the cursor (spelling); again (or
+    M-/), the next correction, and past the last, the word as it was."""
+    state = pane.state()
+    if state and state['backend'] == 'spell':
+        expand(pane)
+        return
+    found = spelling(pane)
+    if isinstance(found, str):
+        tmux('display-message', '-t', pane.pane, f'dabbrev: {found}', check=False)
+        return
+    state = {'backend': 'spell', 'start': found['start'], 'close': '', 'tight': False,
+             'typed_back': found['typed_back'], 'open': False,
+             'levels': [{'none': found['none'], 'label': found['label'], 'alts': found['alts'],
+                         'index': len(found['alts'])}]}
+    step(pane, state, lambda levels: levels[-1].update(index=0))
+
+
 class Pane:
     def __init__(self, pane):
         self.pane = pane
@@ -1565,6 +1765,8 @@ def tab(pane):
     state = pane.state()
     if state and state.get('open') and shown(state)[0].endswith('/'):
         state = None                            # left open: Tab completes what starts with it
+    if state and state['backend'] == 'spell':
+        state = None                            # a correction: Tab completes afresh
     if state:
         level = state['levels'][-1]
         if level['index'] == len(level['alts']):        # none chosen: the first
@@ -1697,4 +1899,4 @@ if __name__ == '__main__':
         target = sys.argv[3] if len(sys.argv) > 3 else os.environ.get('TMUX_PANE', '')
         print('\n'.join(explain(Pane(target), sys.argv[2])))
     else:
-        {'expand': expand, 'tab': tab, 'tab-step': tab_step, 'undo': undo}[sys.argv[1]](Pane(sys.argv[2]))
+        {'expand': expand, 'tab': tab, 'tab-step': tab_step, 'undo': undo, 'spell': spell}[sys.argv[1]](Pane(sys.argv[2]))

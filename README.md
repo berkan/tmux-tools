@@ -20,7 +20,7 @@ named.
 
 - tmux 3.4 or newer (3.5 for `link` to read links without leaving copy mode)
 - python3 (`quote-reply` is plain sh)
-- for `dabbrev`'s `M-/` and `M-?`: a terminal that sends them. In Ghostty, to
+- for `dabbrev`'s `M-/`, `M-?` and `M-$`: a terminal that sends them. In Ghostty, to
   have Cmd+/ and Cmd+Shift+/ do it:
 
   ```
@@ -37,6 +37,8 @@ named.
   keybind = alt+shift+9=text:\x1b(
   keybind = alt+shift+0=text:\x1b)
   ```
+
+  `M-$` is Option+$ with `macos-option-as-alt = true`.
 
 ## Install
 
@@ -89,11 +91,12 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `M-/` | the best completion; again, the next one; past the last, what was typed |
 | `Tab` (in the programs below) | the same first completion; again, the word that follows it on screen, and so on |
 | `M-?` | take back the last press |
+| `M-$` | correct the spelling of the word before the cursor (`tihng` → `thing`), or of the nearest misspelled one further back on its row; again, or `M-/`, the next correction; past the last, the word as it was (below) |
 | `Tab` after `` `code` `` | runs the code, its output in place of it: `` `date +%F` `` → `2026-10-25` (below) |
 
 | option | |
 |---|---|
-| `@dabbrev-key`, `@dabbrev-undo-key` | the keys [`M-/`, `M-?`] |
+| `@dabbrev-key`, `@dabbrev-undo-key`, `@dabbrev-spell-key` | the keys [`M-/`, `M-?`, `M-$`] |
 | `@dabbrev-tab-commands` | programs in which Tab completes, by `#{pane_current_command}`, each a regular expression for the whole name [`claude codex pi node agy gemini [0-9.]+`: Claude Code on macOS is named for its version]; `''` leaves Tab alone |
 | `@dabbrev-order` | the order of words that rank alike [`middle`: nearest the middle of the screen]; also `frequent`, `cursor`, `top` |
 | `@dabbrev-span-order` | the same for entities [`middle`] |
@@ -114,6 +117,28 @@ Entities come before words. A completion after an opening quote or bracket
 is closed with its pair (`"hel` → `"hello" `; the pairs of `@tmux-tools-pairs`),
 unless the closer is after the cursor already, right after it or past spaces
 (`"hel| "` → `"hello| "`), but not a quote that begins the next word.
+
+### Spelling (dabbrev)
+
+`M-$` checks the words left of the cursor on its row, the one the cursor is
+in too, and corrects the last misspelled one; the text after it is typed
+again, the cursor left where it was (after the word, when it was inside
+it). Only words of letters (`it's`, each part of `well-known`), in quotes,
+brackets or punctuation, are checked: not paths, identifiers, file names or
+anything with a digit. The corrections, nearest first (letters swapped,
+dropped, added or changed), are the checker's, and the words on screen it
+does not know (`dabbrev` for `dabrev`), those before the checker's at the
+same distance; at most 8, and the hint shows them. After it, Tab completes
+afresh.
+
+| option | |
+|---|---|
+| `@dabbrev-spell-checker` | a command that speaks `ispell -a`, such as `aspell -a -l en_GB` or `hunspell -a -d en_GB`; `words`: the word list below [unset: `aspell -a`, else `hunspell -a`, the first installed, else the word list] |
+| `@dabbrev-spell-words` | the word list, one a line [`/usr/share/dict/words`] |
+
+A word list knows only the words it lists: macOS's (Webster's of 1934) has
+few plurals or other inflections, so `things` is taken for a misspelling.
+aspell is better (`brew install aspell`; `apt install aspell aspell-en`).
 
 ### link
 
