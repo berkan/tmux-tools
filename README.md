@@ -14,6 +14,7 @@ named.
 | `expand-region` | in copy mode, grow the selection to the next larger region (word, path, quotes, brackets, line, paragraph), like Emacs' expand-region |
 | `quote-reply` | paste the newest copy as `re: "…" -- `, to quote an answer back to an agent |
 | `electric-pair` | type brackets and quotes in pairs, like Emacs' `electric-pair-mode`: `(` gives `(\|)`, `)` or Tab steps over the one after the cursor, Backspace takes an empty pair |
+| `slurp` | inside brackets or quotes, move the closer or opener out over the next word, or back in over the last, like paredit's slurp and barf: `(foo\|) bar` to `(foo\| bar)` |
 
 ## Requirements
 
@@ -25,6 +26,16 @@ named.
   ```
   keybind = cmd+/=text:\x1b/
   keybind = cmd+shift+/=text:\x1b?
+  ```
+- for `slurp`'s `C-(` and `C-)`: a terminal that sends them (as CSI u:
+  Ghostty, kitty, WezTerm). In Ghostty, to slurp with Cmd+( and Cmd+) and
+  barf with Option+( and Option+):
+
+  ```
+  keybind = cmd+shift+9=text:\x1b[40;5u
+  keybind = cmd+shift+0=text:\x1b[41;5u
+  keybind = alt+shift+9=text:\x1b(
+  keybind = alt+shift+0=text:\x1b)
   ```
 
 ## Install
@@ -69,7 +80,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 
 | option | |
 |---|---|
-| `@tmux-tools-pairs` | the pairs of brackets and quotes, two characters each [``` ()[]{}""''`` ```]; e.g. ``` '()[]{}""''``<>' ```. electric-pair types them in pairs; dabbrev closes a completion typed after an opener with its pair, and puts `LEFT \|(` between one; expand-region takes the brackets among them (pairs of two different characters) as regions |
+| `@tmux-tools-pairs` | the pairs of brackets and quotes, two characters each [``` ()[]{}""''`` ```]; e.g. ``` '()[]{}""''``<>' ```. electric-pair types them in pairs; dabbrev closes a completion typed after an opener with its pair, and puts `LEFT \|(` between one; expand-region takes the brackets among them (pairs of two different characters) as regions; slurp moves their ends |
 
 ### dabbrev
 
@@ -183,6 +194,37 @@ or Backspace in an empty pair, takes some 30–45 ms. Keys typed meanwhile
 wait, in order. An opener or quote goes in before its closer is decided, so
 keys typed just before it that the program has not shown yet do not mislead
 it (`don't` typed fast).
+
+### slurp
+
+In the programs below, without the prefix, with the cursor inside a pair of
+brackets or quotes (the innermost around it on its row):
+
+| key | does |
+|---|---|
+| `C-)` | slurp forward: the closer moves past the next word, `(foo\|) bar` to `(foo\| bar)` |
+| `C-(` | slurp backward: the opener moves before the word before, `foo (\|bar)` to `(foo \|bar)` |
+| `M-)` | barf forward: the closer moves before the last word, `(foo bar\|)` to `(foo) bar\|` |
+| `M-(` | barf backward: the opener moves after the first word, `(foo bar\|)` to `foo (bar\|)` |
+
+A word is a run of non-blanks, with a pair in it taken whole (`[a b]`); a
+slurp stops at the end of the pair around (`(a "b\|" c)` slurps `c` and no
+further), a barf leaves one word in. The cursor stays on the character it
+was on.
+
+| option | |
+|---|---|
+| `@tmux-tools-pairs` | the pairs (Shared, above) |
+| `@slurp-commands` | programs it works in, as `@electric-pair-commands` [the same]; `''` binds nothing |
+| `@slurp-keys`, `@slurp-barf-keys` | the keys, backward then forward [`C-( C-)`, `M-( M-)`]; `''` binds none |
+
+tmux cannot see a program's input, so it reads the cursor's row and edits
+it with keys: Left and Right to the end it moves, Backspace, the character
+typed again, back to where the cursor was. It works on one row; before
+changing anything it goes to both ends of the stretch it will change, and
+when the cursor does not get there (the input begins or ends sooner, as
+with a prompt before it or text on the next row), it goes back and leaves
+the text as it was.
 
 ### quote-reply
 
@@ -325,6 +367,7 @@ bash tests/link.test.sh
 bash tests/jump-click.test.sh
 bash tests/expand-region.test.sh
 bash tests/electric-pair.test.sh
+bash tests/slurp.test.sh
 bash tests/entry.test.sh           # tmux-tools.tmux
 ```
 

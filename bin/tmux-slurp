@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+# tmux-slurp — with the cursor inside a pair of brackets or quotes, move one
+# of its ends over a word, as paredit's and smartparens' slurp and barf, from
+# what the screen shows on the cursor's row (tmux cannot see the program's
+# input):
+#   C-)   slurp forward: the closer moves past the next word   (foo|) bar  →  (foo| bar)
+#   C-(   slurp backward: the opener moves before the one before   foo (|bar)  →  (foo |bar)
+#   M-)   barf forward: the closer moves before the last word   (foo ba|r)  →  (foo) ba|r
+#   M-(   barf backward: the opener moves after the first word   (fo|o bar)  →  fo|o (bar)
+# The pair is the innermost around the cursor on its row. A word is a run of
+# non-blanks, a pair within it taken whole, ending at the end of the pair
+# around (a slurp stays inside it). A barf leaves one word in the pair at
+# least. When there is no such word, nothing happens.
+#
+# The pairs are the tools' shared ones (lib/pairs.py): the @tmux-tools-pairs
+# option. A quote opens a pair, as electric-pair has it, when no letter or
+# digit is before it (don't).
+#
+# It moves the program's cursor with Left and Right, takes the end out with
+# BSpace and types it again, so it works in any program whose input takes
+# those keys. It first goes to both ends of the stretch it will change; if
+# the cursor does not get there (the input starts or ends sooner: a prompt
+# before it, the text going on to another row), it goes back and changes
+# nothing. Each step waits for the screen to show it.
+#
+# tmux-slurp bind — bind the keys, without the prefix, in the programs named
+# in @slurp-commands (as electric-pair's, the same by default); elsewhere the
+# key goes on as it is. The keys: @slurp-keys [C-( C-)], @slurp-barf-keys
+# [M-( M-)], backward then forward; '' binds none. Run it from tmux.conf
+# after setting the options.
+# tmux-slurp slurp|barf forward|backward PANE — what the keys run.
+import os
+import sys
+import time
+import unicodedata
+
+COMMANDS_OPTION, COMMANDS_DEFAULT = '@slurp-commands', r'claude codex pi node agy gemini [0-9.]+'
+KEYS = {'slurp': ('@slurp-keys', 'C-( C-)'), 'barf': ('@slurp-barf-keys', 'M-( M-)')}
+
+
+def tmux(*args):
+    """Run tmux with ARGS, its output. (Not subprocess: importing it takes
+    longer than all the rest of a key.)"""
+    r, w = os.pipe()
+    null = os.open(os.devnull, os.O_WRONLY)
+    pid = os.posix_spawnp('tmux', ['tmux', *args], os.environ, file_actions=[
+        (os.POSIX_SPAWN_DUP2, w, 1), (os.POSIX_SPAWN_DUP2, null, 2), (os.POSIX_SPAWN_CLOSE, r)])
+    os.close(w)
+    os.close(null)
+    out = b''
+    while chunk := os.read(r, 65536):
+        out += chunk
+    os.close(r)
+    os.waitpid(pid, 0)
+    return out.decode('utf-8', 'replace')
+
+
+def option(name, default):
+    """The global option NAME, or DEFAULT when it is unset (not when '')."""
+    if not tmux('show-options', '-gq', name):
+        return default
+    return tmux('show-options', '-gqv', name).rstrip('\n')
+
+
+def cell_width(ch):
+    if unicodedata.combining(ch):
+        return 0
+    return 2 if unicodedata.east_asian_width(ch) in 'WF' else 1
+
+
+def column(row, i):
+    """The screen column of the place before character I of ROW."""
+    return sum(cell_width(ch) for ch in row[:i])
+
+
+def index(row, cx):
+    """The character of ROW at screen column CX (past the end, as if blank)."""
+    col = 0
+    for i, ch in enumerate(row):
+        if col >= cx:
+            return i
+        col += cell_width(ch)
+    return len(row) + cx - col
+
+
+def spans(row, table):
+    """{start: end} of the pairs on ROW, TABLE the pairs {opener: closer}:
+    brackets matched, quotes from one to the next of the same (not escaped;
+    one after a letter or digit opens none). Brackets inside quotes are
+    matched among themselves."""
+    out = {}
+
+    def scan(lo, hi):
+        stack = []
+        j = lo
+        while j < hi:
+            ch = row[j]
+            if row[j - 1:j] == '\\':
+                pass
+            elif table.get(ch) == ch:
+                if not row[j - 1:j].isalnum():
+                    k = j + 1
+                    while k < hi and not (row[k] == ch and row[k - 1] != '\\'
+                                          and not (ch == "'" and row[k + 1:k + 2].isalnum())):
+                        k += 1
+                    if k < hi:
+                        out[j] = k
+                        scan(j + 1, k)
+                        j = k
+            elif ch in table:
+                stack.append(j)
+            elif stack and table[row[stack[-1]]] == ch:
+                out[stack.pop()] = j
+            j += 1
+
+    scan(0, len(row))
+    return out
+
+
+def word_after(row, p, limit, pairs):
+    """The end of the word starting at or after P (blanks skipped), before
+    LIMIT; None when there is none."""
+    while p < limit and row[p].isspace():
+        p += 1
+    start = p
+    ends = set(pairs.values())
+    while p < limit and not row[p].isspace():
+        if p in pairs:
+            p = pairs[p] + 1
+        elif p in ends:
+            break
+        else:
+            p += 1
+    return p if p > start else None
+
+
+def word_before(row, p, limit, pairs):
+    """The start of the word ending at or before P (blanks skipped), after
+    LIMIT; None when there is none."""
+    while p > limit and row[p - 1].isspace():
+        p -= 1
+    end = p
+    starts = {e: s for s, e in pairs.items()}
+    while p > limit and not row[p - 1].isspace():
+        if p - 1 in starts:
+            p = starts[p - 1]
+        elif p - 1 in pairs:
+            break
+        else:
+            p -= 1
+    return p if p < end else None
+
+
+def plan(row, i, how, way, table):
+    """The change HOW (slurp, barf) WAY (forward, backward) makes to ROW with
+    the cursor before character I: (d, t, f) — take out character D, put it
+    back at T of what is left, the cursor at F after; None for none."""
+    pairs = spans(row, table)
+    around = [(o, c) for o, c in pairs.items() if o < i <= c]
+    if not around:
+        return None
+    o, c = max(around)
+    outer = [(a, b) for a, b in around if a < o]
+    lo, hi = (max(outer)[0] + 1, max(outer)[1]) if outer else (0, len(row))
+    if (how, way) == ('slurp', 'forward'):
+        e = word_after(row, c + 1, hi, pairs)
+        return None if e is None else (c, e - 1, i)
+    if (how, way) == ('slurp', 'backward'):
+        s = word_before(row, o, lo, pairs)
+        return None if s is None else (o, s, i)
+    if way == 'forward':
+        s = word_before(row, c, o + 1, pairs)
+        if s is None:
+            return None
+        b = s
+        while b > o + 1 and row[b - 1].isspace():
+            b -= 1
+        return None if b <= o + 1 else (c, b, i if i <= b else i + 1)
+    e = word_after(row, o + 1, c, pairs)
+    if e is None:
+        return None
+    n = e
+    while n < c and row[n].isspace():
+        n += 1
+    return None if n >= c else (o, n - 1, i if i >= n else i - 1)
+
+
+def screen(pane, cy):
+    """(cx, cy, row) of PANE now."""
+    out = tmux('display-message', '-p', '-t', pane, '#{cursor_x} #{cursor_y}', ';',
+               'capture-pane', '-p', '-N', '-t', pane, '-S', str(cy), '-E', str(cy))
+    now, _, row = out.partition('\n')
+    x, y = map(int, now.split())
+    return x, y, row.rstrip('\n')
+
+
+def until(pane, cy, done):
+    """Wait (at most 0.5 s) until DONE(cx, cy, row) holds; whether it did."""
+    end = time.monotonic() + 0.5
+    while time.monotonic() < end:
+        if done(*screen(pane, cy)):
+            return True
+        time.sleep(0.003)
+    return False
+
+
+def act(how, way, pane, table):
+    """Slurp or barf (HOW) forward or backward (WAY) in PANE."""
+    cx, cy, row = screen(pane, int(tmux('display-message', '-p', '-t', pane, '#{cursor_y}')))
+    i = index(row, cx)
+    p = plan(row, i, how, way, table)
+    if p is None:
+        return
+    d, t, f = p
+    ch = row[d]
+    rest = row[:d] + row[d + 1:]
+    new = rest[:t] + ch + rest[t:]
+    send = lambda *keys: tmux('send-keys', '-t', pane, *keys)
+
+    def go(text, a, b):
+        """From place A of TEXT to B; whether the cursor got there."""
+        if a != b:
+            send('-N', str(abs(b - a)), 'Right' if b > a else 'Left')
+        return until(pane, cy, lambda x, y, _: (x, y) == (column(text, b), cy))
+
+    # The places it goes to, in ROW: d + 1 to take out D, t to put it back.
+    places = [i, d + 1, t if t <= d else t + 1]
+    first, last = min(places), max(places)
+    if not go(row, i, last) or not go(row, last, first):
+        x, _, _ = screen(pane, cy)
+        go(row, index(row, x), i)
+        return
+    go(row, first, d + 1)
+    send('BSpace')
+    if not until(pane, cy, lambda x, y, r: r.rstrip() == rest.rstrip() and x == column(rest, d)):
+        return
+    go(rest, d, t)
+    send('-l', '--', ch)
+    if not until(pane, cy, lambda x, y, r: r.rstrip() == new.rstrip() and x == column(new, t + 1)):
+        return
+    go(new, t + 1, f)
+
+
+def quoted(text):
+    """TEXT as one word of tmux's command language."""
+    if "'" not in text:
+        return "'%s'" % text
+    return '"%s"' % ''.join('\\' + c if c in '\\"$' else c for c in text)
+
+
+def bind():
+    """Bind the keys in the programs named in @slurp-commands; unbind those
+    bound before and no longer."""
+    script = os.path.abspath(__file__)
+    programs = option(COMMANDS_OPTION, COMMANDS_DEFAULT).split()
+    gate = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(programs)
+    old = tmux('show-options', '-gqv', '@slurp-bound-keys').split()
+    lines, keys = [], []
+    for how, (name, default) in KEYS.items():
+        for way, key in zip(('backward', 'forward'), option(name, default).split() if programs else []):
+            run = 'run-shell ' + quoted(f'{script} {how} {way} #{{pane_id}}')
+            lines.append(f'bind-key -n {quoted(key)} if-shell -F {quoted(gate)} '
+                         f'{{ {run} }} {{ send-keys {quoted(key)} }}')
+            keys.append(key)
+    lines += [f'unbind-key -n {quoted(k)}' for k in old if k not in keys]
+    lines.append(f'set-option -g @slurp-bound-keys {quoted(" ".join(keys))}')
+    path = os.path.join(os.environ.get('TMPDIR', '/tmp'), f'tmux-slurp-{os.getpid()}.conf')
+    with open(path, 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    try:
+        tmux('source-file', path)
+    finally:
+        os.unlink(path)
+
+
+if __name__ == '__main__':
+    if sys.argv[1:] == ['bind']:
+        bind()
+    elif (len(sys.argv) == 4 and sys.argv[1] in KEYS
+          and sys.argv[2] in ('forward', 'backward')):
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'lib'))
+        import pairs                            # lib/pairs.py: the pairs the tools share
+        act(sys.argv[1], sys.argv[2], sys.argv[3], pairs.pairs(tmux))
+    else:
+        sys.exit('usage: tmux-slurp bind | slurp|barf forward|backward PANE')
