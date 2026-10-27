@@ -96,8 +96,8 @@
 #                 the corrections of @dabbrev-spell-checker (one that speaks
 #                 ispell -a; unset: aspell, else hunspell, else words: the
 #                 list in @dabbrev-spell-words), and the words on screen near
-#                 it that it does not know, the nearest first. Again, or M-/,
-#                 the next; past the last, the word as it was (spelling).
+#                 it that it does not know, among them. Again, or M-/,
+#                 the next; past the last, the word as it was (Spell).
 #
 # A press goes on from the last one while the program, the cursor's row and
 # the text left of the cursor are as the last one left them; else it starts
@@ -947,7 +947,9 @@ def closed(text, back, close, tight):
 # left, as characters before the end (none: at the end), ...}; follow(pane, start,
 # chosen) those that go on from the chosen one, for Tab; and if it has one,
 # go_on(pane, start, typed) those that go on from TYPED itself, for Tab when
-# complete has none.
+# complete has none. An alternative's 'label' is what the hint shows of it,
+# and label(typed), if it has one, what the hint shows of TYPED; with
+# afresh, Tab after one of its completions starts a new one.
 
 def snippet(raw):
     """(text, back) of a snippet's TEXT as written in the file: the escapes
@@ -1506,69 +1508,91 @@ def spell_checker():
         return f'no spell checker: no aspell or hunspell, and no word list at {path} (@dabbrev-spell-words)'
 
 
-def spelling(pane):
-    """The corrections of the misspelled word nearest the cursor on its row,
-    left of it (or the word it is in): {'start', 'none' (the text from the
-    word to the cursor, or to the word's end when the cursor is inside it),
-    'typed_back' (how far that goes past the cursor), 'label' (the word),
-    'alts': [{'text': none with the word corrected, 'label': the correction}]};
-    or what to say instead (a str). The corrections are the checker's and the
-    words on screen near it that the checker does not know (a name, a term),
-    the nearest first, those on screen before the checker's at the same
-    distance."""
-    tail = re.match(r'[^\W\d_]*', pane.after).group() if pane.before[-1:].isalpha() else ''
-    line = pane.before + tail
-    found = []                                  # (start, end) of each word, in tokens of their own
-    for m in SPELL_TOKEN.finditer(line):
-        found += [(m.start(1) + w.start(), m.start(1) + w.end()) for w in re.finditer(LETTERS, m.group(1))]
-    if not found:
-        return 'no word to check before the cursor'
-    checker = spell_checker()
-    if isinstance(checker, str):
-        return checker
-    verdicts = checker.check(line[a:b] for a, b in found)
-    if isinstance(verdicts, str):
-        return verdicts
-    wrong = [(a, b) for a, b in found if verdicts[line[a:b]] is not None]
-    if not wrong:
-        return 'no misspelled word before the cursor'
-    a, b = wrong[-1]
-    word = line[a:b]
-    on_screen = {w for row in pane.screen for w in re.findall(LETTERS, row)
-                 if len(w) > 2 and w.lower() != word.lower() and abs(len(w) - len(word)) <= 2}
-    near = [w for w in on_screen if distance(word, w) <= (1 if len(word) <= 4 else 2)]
-    if near:
-        known = checker.check(near)
-        near = [w for w in near if not isinstance(known, str) and known[w] is not None]
-    ranked = sorted([(distance(word, w), 0, w) for w in sorted(near)] +
-                    [(distance(word, w), 1, w) for w in verdicts[word]], key=lambda r: r[:2])
-    fixes = []
-    for _, source, w in ranked:
-        w = cased(word, w) if source or w == w.lower() else w
-        if w not in fixes and w != word:
-            fixes.append(w)
-    if not fixes:
-        return f'{word}: no correction'
-    return {'start': a, 'none': line[a:], 'typed_back': len(tail), 'label': word,
-            'alts': [{'text': w + line[b:], 'label': w} for w in fixes[:SPELL_MAX]]}
+class Spell:
+    """The misspelled word nearest the cursor on its row, left of it (or the
+    word the cursor is in), and the text after it, for the spell key alone:
+    its corrections, the text after it kept. The corrections are the
+    checker's, in its order, and the words on screen near it that the
+    checker does not know (a name, a term), each before the first of the
+    checker's as far from the word or farther (letters swapped, dropped,
+    added, changed). Why there is none is shown."""
+    name = 'spell'
+    afresh = True
+
+    def typed(self, pane, key):
+        found = self.find(pane) if key == 'spell' else None
+        if isinstance(found, str):
+            tmux('display-message', '-t', pane.pane, f'dabbrev: {found}', check=False)
+            return None
+        if found:
+            self.word, self.fixes = found[1], found[2]
+            return found[0], found[3]
+        return None
+
+    @staticmethod
+    def find(pane):
+        """(start, word, its corrections, the text from it to the cursor, or
+        to the word's end when the cursor is inside it); or what to say
+        instead (a str)."""
+        tail = re.match(r'[^\W\d_]*', pane.after).group() if pane.before[-1:].isalpha() else ''
+        line = pane.before + tail
+        found = []                              # (start, end) of each word, in tokens of their own
+        for m in SPELL_TOKEN.finditer(line):
+            found += [(m.start(1) + w.start(), m.start(1) + w.end()) for w in re.finditer(LETTERS, m.group(1))]
+        if not found:
+            return 'no word to check before the cursor'
+        checker = spell_checker()
+        if isinstance(checker, str):
+            return checker
+        verdicts = checker.check(line[a:b] for a, b in found)
+        if isinstance(verdicts, str):
+            return verdicts
+        wrong = [(a, b) for a, b in found if verdicts[line[a:b]] is not None]
+        if not wrong:
+            return 'no misspelled word before the cursor'
+        a, b = wrong[-1]
+        word = line[a:b]
+        on_screen = {w for row in pane.screen for w in re.findall(LETTERS, row)
+                     if len(w) > 2 and w.lower() != word.lower() and abs(len(w) - len(word)) <= 2}
+        near = [w for w in on_screen if distance(word, w) <= (1 if len(word) <= 4 else 2)]
+        if near:
+            known = checker.check(near)
+            near = [w for w in near if not isinstance(known, str) and known[w] is not None]
+        ranked = [cased(word, w) for w in verdicts[word]]
+        for w in sorted(near, key=lambda w: (distance(word, w), w)):
+            at = next((i for i, r in enumerate(ranked) if distance(word, r) >= distance(word, w)), len(ranked))
+            ranked.insert(at, cased(word, w) if w == w.lower() else w)
+        fixes = []
+        for w in ranked:
+            if w not in fixes and w != word:
+                fixes.append(w)
+        if not fixes:
+            return f'{word}: no correction'
+        return a, word, fixes[:SPELL_MAX], line[a:]
+
+    def complete(self, pane, start, typed):
+        rest = typed[len(self.word):]
+        return [{'text': w + rest, 'label': w} for w in self.fixes]
+
+    def label(self, typed):
+        return self.word
+
+    def follow(self, pane, start, chosen):
+        return []
+
+
+SPELL = Spell()
+BY_NAME[SPELL.name] = SPELL
 
 
 def spell(pane):
-    """Correct the misspelled word nearest the cursor (spelling); again (or
-    M-/), the next correction, and past the last, the word as it was."""
+    """Correct the misspelled word nearest the cursor (Spell); again, as M-/,
+    the next correction, and past the last, the word as it was."""
     state = pane.state()
-    if state and state['backend'] == 'spell':
+    if state and state['backend'] == SPELL.name:
         expand(pane)
-        return
-    found = spelling(pane)
-    if isinstance(found, str):
-        tmux('display-message', '-t', pane.pane, f'dabbrev: {found}', check=False)
-        return
-    state = {'backend': 'spell', 'start': found['start'], 'close': '', 'tight': False,
-             'typed_back': found['typed_back'], 'open': False,
-             'levels': [{'none': found['none'], 'label': found['label'], 'alts': found['alts'],
-                         'index': len(found['alts'])}]}
-    step(pane, state, lambda levels: levels[-1].update(index=0))
+    else:
+        start(pane, 'spell', [SPELL])
 
 
 class Pane:
@@ -1724,10 +1748,10 @@ def step(pane, state, change):
     pane.hint(state)
 
 
-def start(pane, key):
-    """Complete the word before the cursor to the best match of the first
-    backend that takes it; False when there is nothing to complete."""
-    for backend in BACKENDS:
+def start(pane, key, backends=BACKENDS):
+    """Complete the word before the cursor to the best match of the first of
+    BACKENDS that takes it; False when there is nothing to complete."""
+    for backend in backends:
         found = backend.typed(pane, key)
         if found:
             break
@@ -1738,7 +1762,7 @@ def start(pane, key):
         alts = backend.go_on(pane, *found)
     if not alts:
         return getattr(backend, 'keeps_tab', False)
-    close = closer(pane.before, found[0], pane.pairs()) if backend.name not in ('snippets', 'eval') else ''
+    close = closer(pane.before, found[0], pane.pairs()) if backend.name not in ('snippets', 'eval', 'spell') else ''
     tight = present(pane.after, close)          # it is there already (,rr's "|")
     state = {'backend': backend.name, 'start': found[0],
              'close': '' if tight else close, 'tight': tight,
@@ -1746,6 +1770,8 @@ def start(pane, key):
              'typed_back': len(pane.before[:found[0]] + found[1]) - len(pane.before),
              'open': tmux('show-options', '-gqv', SLASH_OPTION).strip() == 'on',
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
+    if hasattr(backend, 'label'):
+        state['levels'][0]['label'] = backend.label(found[1])
     step(pane, state, lambda levels: levels[-1].update(index=0))
     return True
 
@@ -1765,8 +1791,8 @@ def tab(pane):
     state = pane.state()
     if state and state.get('open') and shown(state)[0].endswith('/'):
         state = None                            # left open: Tab completes what starts with it
-    if state and state['backend'] == 'spell':
-        state = None                            # a correction: Tab completes afresh
+    if state and getattr(BY_NAME[state['backend']], 'afresh', False):
+        state = None                            # Tab completes afresh after it
     if state:
         level = state['levels'][-1]
         if level['index'] == len(level['alts']):        # none chosen: the first

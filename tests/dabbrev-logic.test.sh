@@ -373,10 +373,15 @@ def spelt(before, rows=(), after=''):
     """What spell finds before the cursor: (where the word starts in what
     follows '> ', what each correction puts in, how far the typed text goes
     past the cursor), or the message it shows."""
-    got = d.spelling(Pane(rows, before, after))
-    if isinstance(got, str):
-        return got
-    return got['start'] - 2, [alt['text'] for alt in got['alts']], got['typed_back']
+    pane, spell = Pane(rows, before, after), d.BY_NAME['spell']
+    del SHOWN[:]
+    found = spell.typed(pane, 'spell')
+    if not found:
+        return SHOWN[-1] if SHOWN else None
+    alts = spell.complete(pane, *found)
+    return found[0] - 2, [alt['text'] for alt in alts], len(pane.before[:found[0]] + found[1]) - len(pane.before)
+check('the spell key alone: not Tab nor M-/', d.BY_NAME['spell'].typed(Pane([], 'tihng'), 'tab') is None and
+      all(b.name != 'spell' for b in d.BACKENDS), None)
 got = spelt('do the tihng')
 check('the word before the cursor: its corrections', got[0] == 7 and got[1][:1] == ['thing'], got)
 check('  ... a swap of two letters first (tihng: thing before thin)', got[1].index('thing') < got[1].index('thin'), got)
@@ -421,6 +426,14 @@ OPTIONS['@dabbrev-spell-checker'] = 'no-such-checker -a'
 got = spelt('tihng')
 check('  ... not found: said so', isinstance(got, str) and 'no-such-checker' in got, got)
 del OPTIONS['@dabbrev-spell-checker'], OPTIONS['@dabbrev-spell-words']
+import shutil, subprocess
+if shutil.which('aspell') and 'en' in subprocess.run(['aspell', 'dump', 'dicts'], text=True, stdout=subprocess.PIPE).stdout.split():
+    got = spelt('the tihng is')                 # unset: aspell, found installed
+    check('aspell (installed): tihng → thing', got[1][:1] == ['thing is'], got)
+    got = spelt('these things and emails work')
+    check('  ... inflections are words (things, emails)', isinstance(got, str) and 'no misspelled word' in got, got)
+else:
+    print('  - aspell with an English dictionary not installed: its cases skipped')
 got = d.hint({'levels': [{'none': 'tihng is', 'label': 'tihng', 'index': 0,
                           'alts': [{'text': 'thing is', 'label': 'thing'}, {'text': 'thin is', 'label': 'thin'}]}]}, 'M-/')
 check('the hint: the words, not what follows them', got == 'M-/ 1/2: [thing] · thin', got)

@@ -994,6 +994,15 @@ typed 'the tihng'; dab spell; typed ' he'; dab tab
 expect "Tab after it completes afresh" 'the thing here ' "$(line)"
 tmux set -gu @dabbrev-spell-checker
 tmux set -gu @dabbrev-spell-words
+if command -v aspell >/dev/null && aspell dump dicts | grep -qx en; then
+    editor 'nothing here'
+    typed 'I recieve the misspeled words'; dab spell
+    expect "aspell (unset: found installed): the last misspelled word" 'I recieve the misspelled words' "$(line)"
+    dab spell
+    expect "  ... again: its next correction" 'I recieve the misapplied words' "$(line)"
+else
+    echo "  - aspell with an English dictionary not installed: its cases skipped"
+fi
 
 echo "bind"
 tmux set -g @dabbrev-tab-commands 'python3 claude'

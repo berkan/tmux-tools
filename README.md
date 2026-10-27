@@ -38,7 +38,13 @@ named.
   keybind = alt+shift+0=text:\x1b)
   ```
 
-  `M-$` is Option+$ with `macos-option-as-alt = true`.
+  Option+$ types `›` on macOS unless Option is Alt (`macos-option-as-alt`,
+  which takes Option's other characters away too); to have it send `M-$`
+  alone:
+
+  ```
+  keybind = opt+shift+4=text:\x1b$
+  ```
 
 ## Install
 
@@ -125,10 +131,11 @@ in too, and corrects the last misspelled one; the text after it is typed
 again, the cursor left where it was (after the word, when it was inside
 it). Only words of letters (`it's`, each part of `well-known`), in quotes,
 brackets or punctuation, are checked: not paths, identifiers, file names or
-anything with a digit. The corrections, nearest first (letters swapped,
-dropped, added or changed), are the checker's, and the words on screen it
-does not know (`dabbrev` for `dabrev`), those before the checker's at the
-same distance; at most 8, and the hint shows them. After it, Tab completes
+anything with a digit. The corrections are the checker's, in its order
+(a word list's: one letter swapped, dropped, changed or added, then two),
+and among them the words on screen it does not know (`dabbrev` for
+`dabrev`), each before the checker's that are as far from the word or
+farther; at most 8, and the hint shows them. After it, Tab completes
 afresh.
 
 | option | |
