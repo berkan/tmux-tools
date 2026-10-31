@@ -14,6 +14,7 @@ named.
 | `expand-region` | in copy mode, grow the selection to the next larger region (word, path, quotes, brackets, line, paragraph), like Emacs' expand-region |
 | `quote-reply` | paste the newest copy as `re: "…" -- `, to quote an answer back to an agent |
 | `electric-pair` | type brackets and quotes in pairs, like Emacs' `electric-pair-mode`: `(` gives `(\|)`, `)` or Tab steps over the one after the cursor, Backspace takes an empty pair |
+| `scroll` | scroll a pane from the keyboard as the mouse wheel does, `M-[` up and `M-]` down: an agent's transcript, or the pane's history in copy mode |
 | `slurp` | inside brackets or quotes, move the closer or opener out over the next word, or back in over the last, like paredit's slurp and barf: `(foo\|) bar` to `(foo\| bar)` |
 
 ## Requirements
@@ -44,6 +45,15 @@ named.
 
   ```
   keybind = opt+shift+4=text:\x1b$
+  ```
+
+- for `scroll`'s `M-[` and `M-]`: a terminal that sends them. On macOS,
+  Option+[ types `“` unless Option is Alt; in Ghostty, to scroll with
+  Cmd+[ and Cmd+] (which take Ghostty's own split switching):
+
+  ```
+  keybind = super+bracket_left=text:\x1b[
+  keybind = super+bracket_right=text:\x1b]
   ```
 
 ## Install
@@ -258,6 +268,26 @@ when the cursor does not get there (the input begins or ends sooner, as
 with a prompt before it or text on the next row), it goes back and leaves
 the text as it was.
 
+### scroll
+
+A press scrolls as one turn of the wheel does. In copy mode it scrolls
+that; in an app that has turned the mouse on (Claude Code, vim, htop) it
+sends the app a wheel event; anywhere else, up enters copy mode and down
+leaves it at the bottom. A key has no pointer, so the wheel turns at
+`@scroll-at`: by default high in the pane, over an agent's transcript
+rather than its input.
+
+| option | |
+|---|---|
+| `@scroll-up-key` | the key, without the prefix, that scrolls up [`M-[`] |
+| `@scroll-down-key` | the key that scrolls down [`M-]`] |
+| `@scroll-lines` | lines a press scrolls in copy mode [5]; an app scrolls by its own wheel step |
+| `@scroll-at` | where the wheel event is, a format giving `column;row` from 1 [the middle of the pane, a third of the way down] |
+
+`ESC [` also begins the terminal's escape sequences. tmux tells them apart,
+but over a slow link (ssh, mosh) one split at that point could be taken
+for `M-[`.
+
 ### quote-reply
 
 | option | |
@@ -400,6 +430,7 @@ bash tests/jump-click.test.sh
 bash tests/expand-region.test.sh
 bash tests/electric-pair.test.sh
 bash tests/slurp.test.sh
+bash tests/scroll.test.sh
 bash tests/entry.test.sh           # tmux-tools.tmux
 ```
 

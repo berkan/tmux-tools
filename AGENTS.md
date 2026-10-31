@@ -14,7 +14,7 @@ every change to keys, options, files or the dabbrev language.
   - `bash tests/dabbrev.test.sh` — typing into a real pane (minutes)
   - `bash tests/link.test.sh`, `bash tests/jump-click.test.sh`,
     `bash tests/expand-region.test.sh`, `bash tests/electric-pair.test.sh`,
-    `bash tests/slurp.test.sh`,
+    `bash tests/slurp.test.sh`, `bash tests/scroll.test.sh`,
     `bash tests/entry.test.sh`
   `link` also has to pass on tmux 3.4 (copy mode keeps no links there).
 - **No dependency on any particular setup**: defaults under

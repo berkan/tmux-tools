@@ -1,0 +1,29 @@
+#!/bin/sh
+# tmux-scroll bind — scroll a pane from the keyboard, as the mouse wheel does:
+# @scroll-up-key [M-[] and @scroll-down-key [M-]], @scroll-lines [5] a press.
+#
+# - In copy mode: scroll it.
+# - In an app that has turned the mouse on (Claude Code, vim, htop): send it
+#   a wheel event (SGR), at @scroll-at, a format giving "column;row" from 1
+#   [the middle of the pane's upper third, where an agent's transcript is,
+#   not its input]. A key has no pointer; this is where the wheel turns.
+# - Otherwise: up enters copy mode, which down leaves at the bottom.
+#
+# The bindings are tmux's own, so a held key repeats without a process each
+# time.
+[ "${1:-}" = bind ] || { echo "usage: tmux-scroll bind" >&2; exit 2; }
+opt() { v=$(tmux show-options -gqv "$1"); echo "${v:-$2}"; }
+up=$(opt @scroll-up-key 'M-[')
+down=$(opt @scroll-down-key 'M-]')
+n=$(opt @scroll-lines 5)
+tmux show-options -gq @scroll-at | grep -q . ||
+    tmux set -g @scroll-at '#{e|+:#{e|/:#{pane_width},2},1};#{e|+:#{e|/:#{pane_height},3},1}'
+conf=$(mktemp "${TMPDIR:-/tmp}/tmux-scroll.XXXXXX")
+trap 'rm -f "$conf"' EXIT
+# The wheel event goes as one write: an app that reads ESC alone may take it
+# for the Escape key.
+cat > "$conf" <<EOF
+bind -n '$up' if -F '#{pane_in_mode}' { send -X -N $n scroll-up } { if -F '#{mouse_any_flag}' { run -C 'send -l "\\e[<64;#{E:@scroll-at}M"' } { copy-mode -e; send -X -N $n scroll-up } }
+bind -n '$down' if -F '#{pane_in_mode}' { send -X -N $n scroll-down } { if -F '#{mouse_any_flag}' { run -C 'send -l "\\e[<65;#{E:@scroll-at}M"' } }
+EOF
+tmux source-file "$conf"
