@@ -542,6 +542,27 @@ editor 'hello world here'
 typed '_h'; dab tab; typed '|('; dab tab
 expect "  ... @dabbrev-pipe-completion off: the word before the |" 'hello world (here)|18' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-pipe-completion
+echo "LEFT |SCOPE( : how far back"
+editor 'Snapshot of the state'
+typed 'say hello big world |2('; dab tab
+expect "|2(: the last 2 words, the cursor after it" 'say hello (big world)|21' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo: back to what was typed" 'say hello big world |2(|23' "$(line)|$(cursor)"
+editor 'Snapshot of the state'
+typed 'say hello |^('; dab tab
+expect "|^(: back to where the input starts, the prompt left as it is" '(say hello)|11' "$(line)|$(cursor)"
+editor 'Snapshot of the state'
+typed 'a b |5('; dab tab
+expect "|5(: more words than typed: from where the input starts" '(a b)|5' "$(line)|$(cursor)"
+editor 'Snapshot of the state'
+typed 'One. Two here |.()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab
+expect "|.( with the closer after the cursor: against it" 'One. (Two here)|14' "$(line)|$(cursor)"
+editor 'Snapshot of the state'
+typed 'Two here |.('; dab tab
+expect "|.(, the first sentence: from where the input starts" '(Two here)|10' "$(line)|$(cursor)"
+editor 'Snapshot of the state'
+typed '- buy milk |-('; dab tab
+expect "|-(: the list item the input starts" '- (buy milk)|12' "$(line)|$(cursor)"
 editor $'see \e[36mdocs/\e[0m and \e[36mdocs/design.md\e[0m here'
 typed 'doc'; dab tab
 expect "a completion ending in / (a coloured span): the space after it" 'docs/ ' "$(line)"

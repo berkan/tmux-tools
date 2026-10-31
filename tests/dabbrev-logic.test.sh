@@ -45,6 +45,9 @@ class Pane(d.Pane):
         self._kinds = {'camelcase', 'capitalised'}
         self._sugars = self._marks = self._pairs = None
 
+    def input_start(self):
+        return 2                                    # after the stand-in prompt, '> '
+
     def state(self, before=None):
         last = getattr(self, 'last', None)          # the state a test says the last press left
         return last if last and last['at'] == (self.before if before is None else before) else None
@@ -215,6 +218,31 @@ check('  ... not a pair: no surround', not got or '<hello>' not in got, got)
 OPTIONS['@tmux-tools-pairs'] = '()<>'
 expect('  ... the pairs from @tmux-tools-pairs', ['<hello>'], PIPED, 'hello |<')
 del OPTIONS['@tmux-tools-pairs']
+
+print('LEFT |SCOPE( : how far back LEFT goes, a count before the unit')
+expect('|2(: the last 2 words', ['(big world)'], PIPED, 'hello big world |2(')
+expect('|3(: the last 3', ['(hello big world)'], PIPED, 'hello big world |3(')
+expect('|1(: as |(', ['(world)'], PIPED, 'hello world |1(')
+expect('  ... a word is what is between blanks', ['(src/a.py now)'], PIPED, 'see src/a.py now |2(')
+expect('  ... a pair within is one word', ['(x (b c))'], PIPED, 'a x (b c) |2(')
+expect('  ... more than there are: back to where the input starts, not into the prompt', ['(hello world)'], PIPED, 'hello world |5(')
+expect('  ... an operator in it is text, as typed', ['(^Sn here)'], PIPED, '^Sn here |2(')
+expect('|^(: back to where the input starts', ['(hello big world)'], PIPED, 'hello big world |^(')
+expect('|.(: back to the start of the sentence', ['(Then more)'], PIPED, 'One here. Then more |.(')
+expect('  ... one just ended: it, its stop and all', ['(Then more.)'], PIPED, 'One here. Then more. |.(')
+expect('  ... ! ? : end one too', ['(and more)'], PIPED, 'Why? Yes: and more |.(')
+expect('  ... the first: back to where the input starts', ['(One here)'], PIPED, 'One here |.(')
+expect('|2.(: the last 2 sentences', ['(One here. Then more)'], PIPED, 'Zero. One here. Then more |2.(')
+expect('|-(: the list item the row starts', ['(buy milk)'], PIPED, '- buy milk |-(')
+expect('  ... a * item', ['(buy milk)'], PIPED, '* buy milk |-(')
+expect('  ... a numbered item', ['(eggs)'], PIPED, '2. eggs |-(')
+expect('  ... no item: nothing', [], PIPED, 'buy milk |-(')
+expect('a quote, with a scope', ['"big world"'], PIPED, 'hello big world |2"')
+got = alternatives(PIPED, 'hello big world |2(', after=')')
+check('  ... the closer after the cursor already (electric-pair): ended against it', got == ['(big world'], got)
+OPTIONS['@dabbrev-snippets'] = SNIP
+expect('a snippet, with a scope', ['re: "big world" -- '], PIPED, 'hello big world |2 ,r')
+del OPTIONS['@dabbrev-snippets']
 
 print('LEFT right after a completion: the whole completion (@dabbrev-pipe-completion, on by default)')
 def last(at, start, text, **more):

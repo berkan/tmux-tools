@@ -386,6 +386,7 @@ touches it (or is one space after it, for the marks in
 | `,re` | the snippet `re` |
 | `_Sn \| ,re` | the row starting `Sn`, put in the snippet `re` |
 | `hello \|(` | `(hello)`: between the pair, for each of `@tmux-tools-pairs` |
+| `hello big world \|2(` | `hello (big world)`: a scope after the `\|` says how far back |
 
 Ends after `..` (with the end) or `...` (up to it): a word, `$` (the line's
 end), `$$` (the block's), `.` (the sentence's), `?`, `!`, `^Wh` (the next line
@@ -409,6 +410,23 @@ closed in (`@dabbrev-pipe-completion`).
 `_Sn |"` the row in quotes, for each of `@tmux-tools-pairs`. When the closer is already after the cursor
 (electric-pair typed it with the opener), the text ends against it, the
 cursor before it, so typing the closer steps over it.
+
+A scope between the `|` and what follows it says how far back LEFT goes,
+LEFT then being the text as typed; a count before the unit takes that many:
+
+| after the `\|` | LEFT is |
+|---|---|
+| `3` | the last 3 words: blank to blank, a pair within one taken whole |
+| `.`, `2.` | back to the start of the sentence, of the last 2 (past a `.` `!` `?` or `:` and a blank; one just ended counts) |
+| `-` | the list item the input starts with, after its `-` `*` `+` or `1.` |
+| `^` | back to where the input starts |
+
+`hello big world |2(` gives `hello (big world)`, `One. Two more |.(` gives
+`One. (Two more)`, `say hello |^"` gives `"say hello"`, and `| ,name` takes
+one too (`|2 ,re`). Only the cursor's row is read. Where the input starts
+(after `❯ ` in a prompt) only the program knows: when a scope gets back
+to the row's first non-blank, its cursor is moved left as far as it goes,
+and back, to find out.
 
 An operator with nothing on screen to match is text: its word completes as
 any (`^Howitzer`). `M-/` cycles the last operator's matches; `M-?` takes the

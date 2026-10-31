@@ -18,7 +18,10 @@
 #   pipe          ... | ,NAME: what is left of the | (an operator or chain,
 #                 expanded; a \TEXT; else the word before it) put in the
 #                 snippet NAME, where its | is; ... |( between the pair, for
-#                 each pair of @tmux-tools-pairs (Pipe).
+#                 each pair of @tmux-tools-pairs (Pipe). A scope after the
+#                 | (|2(, |.(, |2.(, |-(, |^() takes LEFT as typed, back so
+#                 many words, sentences, to the list item's or the input's
+#                 start (Pipe.scoped).
 #   snippets      a word starting , (,rr): the snippets in the file named by
 #                 @dabbrev-snippets (default ~/.config/tmux-dabbrev/snippets)
 #                 whose names start with the rest, by name; Tab needs a
@@ -1023,9 +1026,61 @@ class Pipe:
 
     @staticmethod
     def pattern(pane):
-        """... | ,NAME or ... |( : the | and what it puts LEFT in (group 1)."""
+        """... | ,NAME or ... |( : the | , a scope after it (group 'scope', see
+        scoped) and what it puts LEFT in (group 1)."""
         into = [',' + pane.marks().gap(',') + r'\w+'] + ([f'[{re.escape("".join(pane.pairs()))}]'] if pane.pairs() else [])
-        return re.compile(r'\s*\|\s*(' + '|'.join(into) + ')$')
+        return re.compile(r'\s*\|(?P<scope>\d*[.^-]|\d+|)\s*(?P<into>' + '|'.join(into) + ')$')
+
+    @staticmethod
+    def scoped(pane, text, scope):
+        """Where in TEXT (the cursor's row, up to the |) LEFT starts for the
+        SCOPE after the |: a count of words (blank to blank, a pair within
+        one taken whole), N. sentences (back past N stops: . ! ? or : and a
+        blank; one just ended is the first), the list item the input starts
+        (- * + or 1. 1) and blanks: LEFT after them), ^ where the input
+        starts. Not before where the input starts, which only the program
+        knows (Pane.input_start), asked when the scope gets back to the
+        row's first non-blank; None for nothing."""
+        n, unit = int(re.match(r'\d*', scope).group() or 1), scope.lstrip('0123456789')
+        end = len(text.rstrip())
+        floor = lambda: max(pane.input_start(), len(text) - len(text.lstrip()))
+        if unit == '^':
+            start = floor()
+        elif unit == '-':
+            m = re.match(r'(?:[-*+]|\d+[.)])\s+', text[floor():])
+            start = floor() + m.end() if m else None
+        elif unit == '.':
+            p = end
+            for _ in range(n):
+                stops = [k for k in range(p - 1) if text[k] in '.!?:' and text[k + 1].isspace()]
+                if not stops:
+                    p = None
+                    break
+                p = stops[-1] + 1
+            start = floor() if p is None else p + len(text[p:]) - len(text[p:].lstrip())
+            start = max(start, floor()) if p is None or not text[:p].strip() else start
+        else:
+            pairs = pane.pairs()
+            closers = {c: o for o, c in pairs.items() if c != o}
+            p = end
+            for _ in range(n):
+                while p and text[p - 1].isspace():
+                    p -= 1
+                if not p:
+                    break
+                while p and not text[p - 1].isspace():
+                    if text[p - 1] in closers:               # a pair, whole
+                        depth, q = 0, p - 1
+                        while q >= 0:
+                            depth += {text[p - 1]: 1, closers[text[p - 1]]: -1}.get(text[q], 0)
+                            if not depth:
+                                break
+                            q -= 1
+                        p = q if q >= 0 else p - 1
+                    else:
+                        p -= 1
+            start = max(p, floor()) if not text[:p].strip() else p
+        return start if start is not None and start < end else None
 
     @staticmethod
     def into(pane, start, target):
@@ -1041,6 +1096,9 @@ class Pipe:
         m = self.pattern(pane).search(pane.before)
         if not m:
             return None
+        if m.group('scope'):
+            start = self.scoped(pane, pane.before[:m.start()], m.group('scope'))
+            return None if start is None else (start, pane.before[start:])
         start = self.completion(pane, m)
         left = (start, 'completion') if start is not None else self.left(pane, pane.before[:m.start()])
         return (left[0], pane.before[left[0]:]) if left else None
@@ -1080,7 +1138,12 @@ class Pipe:
     def complete(self, pane, start, typed):
         m = self.pattern(pane).search(typed)
         text = typed[:m.start()]
-        into = self.into(pane, start, m.group(1))
+        into = self.into(pane, start, m.group("into"))
+        if m.group('scope'):                        # LEFT is the text the scope gives, as typed
+            if not into or not text:
+                return []
+            body, cut = into
+            return [{'text': body[:cut] + text + body[cut:]}]
         completion = self.completion(pane, self.pattern(pane).search(pane.before)) == start
         left = (0, 'completion') if completion else self.left(pane, text)
         if not into or not left or left[0]:
@@ -1595,6 +1658,19 @@ def spell(pane):
         start(pane, 'spell', [SPELL])
 
 
+def settle(where, was, wait=0.5):
+    """WHERE() once it has moved from WAS and stopped (two reads alike), or
+    as it is after WAIT seconds."""
+    end, last = time.monotonic() + wait, None
+    while time.monotonic() < end:
+        now = where()
+        if now != was and now == last:
+            return now
+        last = now
+        time.sleep(0.015)
+    return where()
+
+
 class Pane:
     def __init__(self, pane):
         self.pane = pane
@@ -1607,6 +1683,34 @@ class Pane:
         self.before = left_of(self.screen[cy] if cy < len(self.screen) else '', cx)
         self.after = (self.screen[cy] if cy < len(self.screen) else '')[len(self.before):]
         self._cwd = self._escaped = self._order = self._kinds = self._sugars = self._marks = self._pairs = None
+        self._input_start = None
+
+    def input_start(self):
+        """Where the program's input starts on the cursor's row, as an index of
+        before (tmux cannot see the input): the program's cursor moved left as
+        far as it goes on this row, then back. When it goes on to the row
+        above, the input started there: 0 (the scope's own floor, the row's
+        first non-blank, then holds)."""
+        if self._input_start is None:
+            n = len(self.before)
+            send = lambda *keys: tmux('send-keys', '-t', self.pane, *keys)
+            where = lambda: tuple(map(int, tmux('display-message', '-p', '-t', self.pane,
+                                                 '#{cursor_x} #{cursor_y}').split()))
+            send('-N', str(n), 'Left')
+            x, y = settle(where, (self.cx, self.cy))
+            if y == self.cy:
+                self._input_start = len(left_of(self.before, x))
+                moved = n - self._input_start
+            else:
+                self._input_start, moved = 0, n
+            if moved:
+                send('-N', str(moved), 'Right')
+            x, y = settle(where, (x, y))
+            if y == self.cy and x != self.cx:       # not quite back: the rest of the way
+                k = len(left_of(self.before, x)) if x < self.cx else None
+                if k is not None:
+                    send('-N', str(len(self.before) - k), 'Right')
+        return self._input_start
 
     def at(self, before, after):
         """This pane with BEFORE and AFTER the cursor instead (a chain's
@@ -1879,12 +1983,14 @@ def explain(pane, text):
     units (a chain's, or the one), what is between them, and what each takes
     from the screen (the first few), then what Tab would type."""
     marks = pane.marks()
-    piped = Pipe().typed(pane.at(text, ''), 'tab')
+    view = pane.at(text, '')
+    view._input_start = 0                       # the text given, not the pane's row: its input from its start
+    piped = Pipe().typed(view, 'tab')
     if piped:
         m = Pipe.pattern(pane).search(text)
-        left = Pipe.left(pane, text[:m.start()])
-        alts = Pipe().complete(pane.at(text, ''), *piped)
-        into = f'the snippet {marks.arg_of(m.group(1))!r}' if m.group(1).startswith(',') else f'the pair {m.group(1) + pane.pairs()[m.group(1)]!r}'
+        left = (None, f"scope {m.group('scope')}") if m.group('scope') else Pipe.left(pane, text[:m.start()])
+        alts = Pipe().complete(view, *piped)
+        into = f'the snippet {marks.arg_of(m.group("into"))!r}' if m.group("into").startswith(',') else f'the pair {m.group("into") + pane.pairs()[m.group("into")]!r}'
         return [f'{text!r}: a pipe', f"  {text[piped[0]:m.start()]!r} ({left[1]}) into {into}",
                 'Tab types: ' + (repr(alts[0]['text']) if alts else 'nothing (Tab goes to the program)')]
     chain = parse_chain(text, marks)
