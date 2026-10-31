@@ -188,6 +188,15 @@ second jump moves the selection's end.
 | option | |
 |---|---|
 | `@jump-click-key` | the key(s) after the prefix [`C-j`]; several separated by spaces |
+| `@jump-click-back-key` | the key, without the prefix, that goes back to where the cursor was before the last jump [none] |
+| `@jump-click-mark-keys` | other keys, without the prefix, that count as jumps, e.g. `C-a C-e` [none]: each notes where the cursor is, then goes on to the program as it is |
+
+Back moves the program's cursor the way a jump does, and the place it
+leaves becomes the one to go back to, so pressing it again returns. After
+a jump in copy mode it leaves copy mode. The place is a place on screen,
+one per pane: if the text before it changes, or the screen scrolls, back
+goes to the same cell. A mark key must not be bound in tmux for anything
+else.
 
 ### expand-region
 

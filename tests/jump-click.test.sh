@@ -347,5 +347,37 @@ pick b a
 expect "a place on the cursor's line still gets arrow keys" "alpha Xbeta" \
     "$(inner send-keys -t "$PANE" X Enter; sleep 0.3; inner capture-pane -p -t "$PANE" | sed -n 4p)"
 
+echo "back (@jump-click-back-key): to where the cursor was before a jump"
+back() { TMUX="$SOCKET,0,0" python3 "$CLICK" back "$PANE"; sleep 0.3; }
+bash_line 'echo alpha beta gamma'
+pick b; back
+expect "after a jump: back where it was" "alpha beta gammaX" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; back; back
+expect "  ... and again: back where the jump went" "alpha Xbeta gamma" "$(ran)"
+run_pane "python3 $SCRATCH/editor.py $SCRATCH/rec.log clicks 'alpha beta gamma'"
+pick b; back
+expect "  ... in a program that takes clicks" "1 18" "$(inner display -p -t "$PANE" '#{cursor_y} #{cursor_x}' | awk '{print $1+1, $2}')"
+inner set -pu -t "$PANE" @jump-click-from         # a pane keeps its options when respawned
+bash_line 'echo alpha beta gamma'
+back
+expect "  ... no jump yet: nothing" "alpha beta gammaX" "$(ran)"
+inner set -g @jump-click-mark-keys 'C-a'
+inner set -g @jump-click-back-key 'M-g'
+inner run-shell "python3 $CLICK bind"
+bash_line 'echo alpha beta'
+tmux -L "$OUTER" send-keys C-a; sleep 0.3
+expect "@jump-click-mark-keys: the key still does what it did (bash: after its prompt)" "1 2" "$(inner display -p -t "$PANE" '#{cursor_y} #{cursor_x}' | awk '{print $1+1, $2}')"
+tmux -L "$OUTER" send-keys M-g; sleep 0.5
+expect "  ... and back (the @jump-click-back-key) goes to before it" "alpha betaX" "$(ran)"
+run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --norc --noprofile"
+inner send-keys -t "$PANE" -l 'echo bravo'; inner send-keys -t "$PANE" Enter; sleep 0.2
+inner send-keys -t "$PANE" -l 'echo alpha beta'; sleep 0.2
+pick b s; back
+expect "after a jump in copy mode: copy mode left" "0" "$(inner display -p -t "$PANE" '#{pane_in_mode}')"
+inner set -gu @jump-click-mark-keys; inner set -gu @jump-click-back-key
+inner run-shell "python3 $CLICK bind"
+expect "  ... unset: the keys unbound" "" "$(inner list-keys -T root | grep -E ' (C-a|M-g) ' || true)"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

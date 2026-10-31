@@ -29,9 +29,20 @@
 # view (scrolled back or not) gets a label, and the pick moves the selection's
 # end.
 #
+#
+# Back: tmux-jump-click back PANE returns the program's cursor to where it was
+# before the last jump (the same way: a click, or Left/Right), and the place
+# it leaves becomes the one to go back to, so back again returns. After a jump
+# in copy mode it leaves copy mode. Keys in @jump-click-mark-keys (C-a C-e:
+# none by default) count as jumps too: each first notes where the cursor is,
+# then goes on to the program as it is. The place is a place on screen: if the
+# text before it changes, or the screen scrolls, back goes to the same cell.
+#
 #   tmux-jump-click bind   bind the keys in the @jump-click-key option (default
-#       C-j; several separated by spaces) after the prefix; run it from
-#       tmux.conf after setting the option
+#       C-j; several separated by spaces) after the prefix, the one in
+#       @jump-click-back-key (none by default) and those in
+#       @jump-click-mark-keys without it; run it from tmux.conf after setting
+#       the options
 #   tmux-jump-click --pick SCREEN FIRST LAST CY CX MY MX OUT   (internal) the
 #       popup's side: read the keys, write "row col" of the pick to OUT; FIRST
 #       to LAST are the rows the cursor can reach, (CY, CX) the cursor, (MY, MX)
@@ -365,13 +376,46 @@ def main(pane, client):
     if not first <= row <= last:
         copy_mode_jump(pane, lines, row, col, select=True)
         return
+    remember(pane, int(info['cursor_y']), int(info['cursor_x']))
+    if not go(pane, info, row, col):
+        copy_mode_jump(pane, lines, row, col)
+
+
+FROM = '@jump-click-from'                   # where back goes: "row col", per pane
+
+
+def remember(pane, row, col):
+    tmux('set-option', '-p', '-t', pane, FROM, f'{row} {col}')
+
+
+def go(pane, info, row, col):
+    """Move the program's cursor to (ROW, COL): a click, when it asks for
+    mouse events and the click moves it; else Left/Right on its line.
+    Whether it went."""
     cursor = (int(info['cursor_y']), int(info['cursor_x']))
     if info['mouse_any_flag'] == '1' and cursor != (row, col):
         click(pane, info, row, col)
         if cursor_moved(pane, cursor):
-            return
-    if not move_cursor(pane, info, row, col):
-        copy_mode_jump(pane, lines, row, col)
+            return True
+    return move_cursor(pane, info, row, col)
+
+
+def back(pane):
+    """Back to where the cursor was before the last jump (see above)."""
+    info = read_info(pane)
+    if info['pane_in_mode'] == '1':
+        tmux('send-keys', '-t', pane, '-X', 'cancel')
+        return
+    was = tmux('show-options', '-pqv', '-t', pane, FROM).split()
+    if len(was) != 2:
+        return
+    row, col = map(int, was)
+    here = (int(info['cursor_y']), int(info['cursor_x']))
+    if (row, col) == here:
+        return
+    remember(pane, *here)
+    if not go(pane, info, row, col):
+        remember(pane, row, col)                # not there: kept for another try
 
 
 def bind():
@@ -387,6 +431,19 @@ def bind():
         if key not in keys:
             subprocess.run(['tmux', 'unbind-key', key], stderr=subprocess.DEVNULL)
     tmux('set-option', '-g', '@jump-click-bound-key', ' '.join(keys))
+    script = os.path.abspath(__file__)
+    root = tmux('show-options', '-gqv', '@jump-click-back-key').split()[:1]
+    marks = [k for k in tmux('show-options', '-gqv', '@jump-click-mark-keys').split() if k not in root]
+    for key in root:
+        tmux('bind-key', '-n', key, 'run-shell', '-b', f"{script} back '#{{pane_id}}'")
+    for key in marks:
+        # In tmux itself, no process: the place noted, the key sent on.
+        tmux('bind-key', '-n', key, 'set-option', '-pF', FROM, '#{cursor_y} #{cursor_x}', '\\;',
+             'send-keys', key)
+    for key in tmux('show-options', '-gqv', '@jump-click-bound-root').split():
+        if key not in root + marks:
+            subprocess.run(['tmux', 'unbind-key', '-n', key], stderr=subprocess.DEVNULL)
+    tmux('set-option', '-g', '@jump-click-bound-root', ' '.join(root + marks))
 
 
 if __name__ == '__main__':
@@ -394,5 +451,7 @@ if __name__ == '__main__':
         pick(sys.argv[2], *map(int, sys.argv[3:9]), sys.argv[9])
     elif sys.argv[1:] == ['bind']:
         bind()
+    elif sys.argv[1:2] == ['back'] and len(sys.argv) == 3:
+        back(sys.argv[2])
     else:
         main(sys.argv[1], sys.argv[2])
