@@ -35,8 +35,11 @@
 # it leaves becomes the one to go back to, so back again returns. After a jump
 # in copy mode it leaves copy mode. Keys in @jump-click-mark-keys (C-a C-e:
 # none by default) count as jumps too: each first notes where the cursor is,
-# then goes on to the program as it is. The place is a place on screen: if the
-# text before it changes, or the screen scrolls, back goes to the same cell.
+# then goes on to the program as it is. The place is kept as a place in the
+# line's text, counted from the end away from the cursor, as an Emacs marker
+# moves: text typed at the cursor leaves it where it was in the text (on
+# the cursor's line; elsewhere, or after a jump to another line, it is the
+# cell on screen it was).
 #
 #   tmux-jump-click bind   bind the keys in the @jump-click-key option (default
 #       C-j; several separated by spaces) after the prefix, the one in
@@ -376,16 +379,58 @@ def main(pane, client):
     if not first <= row <= last:
         copy_mode_jump(pane, lines, row, col, select=True)
         return
-    remember(pane, int(info['cursor_y']), int(info['cursor_x']))
+    here = (int(info['cursor_y']), int(info['cursor_x']))
+    on = on_line(pane, info)
+    remember(pane, *here, on and anchor(on[2], index_at(on, *here), index_at(on, row, col)))
     if not go(pane, info, row, col):
         copy_mode_jump(pane, lines, row, col)
 
 
 FROM = '@jump-click-from'                   # where back goes: "row col", per pane
+FROM_IN = '@jump-click-from-in'             # and in the line's text: "start N" or "end N"
 
 
-def remember(pane, row, col):
+def remember(pane, row, col, place=None):
+    """Note (ROW, COL) as where back goes; PLACE, its place in the line's
+    text (anchor), when known."""
     tmux('set-option', '-p', '-t', pane, FROM, f'{row} {col}')
+    if place:
+        tmux('set-option', '-p', '-t', pane, FROM_IN, place)
+    else:
+        tmux('set-option', '-pu', '-t', pane, FROM_IN)
+
+
+def on_line(pane, info):
+    """(first_row, last_row, text, width) of the cursor's line, its text
+    without the blanks after it."""
+    first, last, text = cursor_line(pane, info)
+    return first, last, text.rstrip(), int(info['pane_width'])
+
+
+def index_at(line, row, col):
+    """The characters of LINE's text before cell (ROW, COL); None when the
+    cell is not on LINE."""
+    first, last, text, width = line
+    if not first <= row <= last:
+        return None
+    return min(char_index(text, (row - first) * width + col), len(text))
+
+
+def cell_at(line, i):
+    """(row, col) of the place before character I of LINE's text."""
+    first, _, text, width = line
+    offset = sum(cell_width(ch) for ch in text[:i])
+    return first + offset // width, offset % width
+
+
+def anchor(text, mark, cursor):
+    """The place MARK (an index of TEXT) as its distance from the end of TEXT
+    away from CURSOR, where the edits will be, as an Emacs marker moves with
+    text typed before it: "end N" when it is after the cursor, else
+    "start N"; None when either is not on the line."""
+    if mark is None or cursor is None:
+        return None
+    return f'end {len(text) - mark}' if mark > cursor else f'start {mark}'
 
 
 def go(pane, info, row, col):
@@ -410,12 +455,38 @@ def back(pane):
     if len(was) != 2:
         return
     row, col = map(int, was)
+    place = tmux('show-options', '-pqv', '-t', pane, FROM_IN).strip()
     here = (int(info['cursor_y']), int(info['cursor_x']))
+    line = on_line(pane, info)
+    target = None
+    if place:                                   # where it is in the text now
+        side, n = place.split()
+        text = line[2]
+        target = max(0, min(len(text), int(n) if side == 'start' else len(text) - int(n)))
+        row, col = cell_at(line, target)
     if (row, col) == here:
         return
-    remember(pane, *here)
+    remember(pane, *here, anchor(line[2], index_at(line, *here), target if target is not None else index_at(line, row, col)))
     if not go(pane, info, row, col):
-        remember(pane, row, col)                # not there: kept for another try
+        remember(pane, *map(int, was), place)   # not there: kept for another try
+
+
+def mark(pane, key):
+    """A key of @jump-click-mark-keys: note where the cursor is, send KEY on,
+    and once the cursor has moved, the place in the line's text (anchor). Run
+    by its binding in the foreground: tmux holds the keys typed after it
+    until this is done, so the text read is the text the key left."""
+    info = read_info(pane)
+    here = (int(info['cursor_y']), int(info['cursor_x']))
+    remember(pane, *here)
+    tmux('send-keys', '-t', pane, key)
+    if not cursor_moved(pane, here, wait=0.15):
+        return
+    info = read_info(pane)
+    line = on_line(pane, info)
+    place = anchor(line[2], index_at(line, *here), index_at(line, int(info['cursor_y']), int(info['cursor_x'])))
+    if place:
+        tmux('set-option', '-p', '-t', pane, FROM_IN, place)
 
 
 def bind():
@@ -437,9 +508,7 @@ def bind():
     for key in root:
         tmux('bind-key', '-n', key, 'run-shell', '-b', f"{script} back '#{{pane_id}}'")
     for key in marks:
-        # In tmux itself, no process: the place noted, the key sent on.
-        tmux('bind-key', '-n', key, 'set-option', '-pF', FROM, '#{cursor_y} #{cursor_x}', '\\;',
-             'send-keys', key)
+        tmux('bind-key', '-n', key, 'run-shell', f"{script} mark '#{{pane_id}}' {shlex.quote(key)}")
     for key in tmux('show-options', '-gqv', '@jump-click-bound-root').split():
         if key not in root + marks:
             subprocess.run(['tmux', 'unbind-key', '-n', key], stderr=subprocess.DEVNULL)
@@ -453,5 +522,7 @@ if __name__ == '__main__':
         bind()
     elif sys.argv[1:2] == ['back'] and len(sys.argv) == 3:
         back(sys.argv[2])
+    elif sys.argv[1:2] == ['mark'] and len(sys.argv) == 4:
+        mark(sys.argv[2], sys.argv[3])
     else:
         main(sys.argv[1], sys.argv[2])

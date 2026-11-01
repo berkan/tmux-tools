@@ -193,10 +193,13 @@ second jump moves the selection's end.
 
 Back moves the program's cursor the way a jump does, and the place it
 leaves becomes the one to go back to, so pressing it again returns. After
-a jump in copy mode it leaves copy mode. The place is a place on screen,
-one per pane: if the text before it changes, or the screen scrolls, back
-goes to the same cell. A mark key must not be bound in tmux for anything
-else.
+a jump in copy mode it leaves copy mode. One place per pane, kept as a
+place in the line's text, as an Emacs marker: counted from the end away
+from the cursor, so text typed at the cursor leaves it where it was (`Cmd+A`,
+text typed at the start, back: the end of the line). For a jump to another
+line, it is the cell on screen. A mark key must not be bound in tmux for
+anything else; it waits, a moment, for the cursor to move before the keys
+after it go on, so the place is read from the text it left.
 
 ### expand-region
 

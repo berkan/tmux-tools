@@ -362,7 +362,7 @@ inner set -pu -t "$PANE" @jump-click-from         # a pane keeps its options whe
 bash_line 'echo alpha beta gamma'
 back
 expect "  ... no jump yet: nothing" "alpha beta gammaX" "$(ran)"
-inner set -g @jump-click-mark-keys 'C-a'
+inner set -g @jump-click-mark-keys 'C-a C-e'
 inner set -g @jump-click-back-key 'M-g'
 inner run-shell "python3 $CLICK bind"
 bash_line 'echo alpha beta'
@@ -370,6 +370,20 @@ tmux -L "$OUTER" send-keys C-a; sleep 0.3
 expect "@jump-click-mark-keys: the key still does what it did (bash: after its prompt)" "1 2" "$(inner display -p -t "$PANE" '#{cursor_y} #{cursor_x}' | awk '{print $1+1, $2}')"
 tmux -L "$OUTER" send-keys M-g; sleep 0.5
 expect "  ... and back (the @jump-click-back-key) goes to before it" "alpha betaX" "$(ran)"
+bash_line 'echo alpha beta'
+tmux -L "$OUTER" send-keys C-a; sleep 0.3
+inner send-keys -t "$PANE" -N 5 Right; inner send-keys -t "$PANE" -l 'new '; sleep 0.2
+tmux -L "$OUTER" send-keys M-g; sleep 0.5
+expect "  ... text typed before the place: back to it still (the line's end)" "new alpha betaX" "$(ran)"
+bash_line 'echo alpha beta'
+inner send-keys -t "$PANE" -N 4 Left; sleep 0.2
+tmux -L "$OUTER" send-keys C-e; sleep 0.3
+inner send-keys -t "$PANE" -l ' more'; sleep 0.2
+tmux -L "$OUTER" send-keys M-g; sleep 0.5
+expect "  ... text typed after it: back to it still" "alpha Xbeta more" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick a; inner send-keys -t "$PANE" -l 'one '; sleep 0.2; back
+expect "  ... after a jump-click too" "one alpha beta gammaX" "$(ran)"
 run_pane "env -i HOME=$SCRATCH TERM=tmux-256color PS1='$ ' BASH_SILENCE_DEPRECATION_WARNING=1 bash --norc --noprofile"
 inner send-keys -t "$PANE" -l 'echo bravo'; inner send-keys -t "$PANE" Enter; sleep 0.2
 inner send-keys -t "$PANE" -l 'echo alpha beta'; sleep 0.2
@@ -377,7 +391,7 @@ pick b s; back
 expect "after a jump in copy mode: copy mode left" "0" "$(inner display -p -t "$PANE" '#{pane_in_mode}')"
 inner set -gu @jump-click-mark-keys; inner set -gu @jump-click-back-key
 inner run-shell "python3 $CLICK bind"
-expect "  ... unset: the keys unbound" "" "$(inner list-keys -T root | grep -E ' (C-a|M-g) ' || true)"
+expect "  ... unset: the keys unbound" "" "$(inner list-keys -T root | grep -E ' (C-a|C-e|M-g) ' || true)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
