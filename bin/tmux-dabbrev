@@ -6,9 +6,9 @@
 # keys: Claude Code, pi, a shell. Completions come from a backend, the first
 # in BACKENDS whose trigger matches the text before the cursor:
 #
-#   eval          M-/ (@dabbrev-eval-key) after `CODE` (a key of its own also
-#                 before the closing backtick, which goes too): what CODE
-#                 prints, in place of it, backticks and all (Eval). A first word naming an engine
+#   eval          M-/ (@dabbrev-eval-key) after `CODE`, past its closing
+#                 backtick: what CODE prints, in place of it, backticks and
+#                 all (Eval). A first word naming an engine
 #                 (sh js py, and those in @dabbrev-engines) runs the rest with
 #                 it; else sh runs it all, unless @dabbrev-eval is engines
 #                 (then it must be named) or off. In the pane's folder, for at most
@@ -146,7 +146,6 @@ SNIPPETS_OPTION, SNIPPETS_DEFAULT = '@dabbrev-snippets', '~/.config/tmux-dabbrev
 # `code` + M-/ (Eval): a code span, its first backtick not after a letter,
 # digit or backtick; and the engines that run it ({} the code, else stdin).
 CODE_CLOSED = re.compile(r'(?<![\w`])`([^`]+)`$')
-CODE_OPEN = re.compile(r'(?<![\w`])`([^`]+)$')
 EVAL_OPTION = '@dabbrev-eval'                                   # on, engines or off
 EVAL_KEY_OPTION = '@dabbrev-eval-key'                           # unset: @dabbrev-key's
 EVAL_TIMEOUT_OPTION, EVAL_TIMEOUT_DEFAULT = '@dabbrev-eval-timeout', 5.0
@@ -1431,9 +1430,7 @@ def eval_press():
 
 class Eval:
     """`CODE` + the key that runs it (eval_key): what CODE prints, in place of
-    it, backticks and all. A key of its own will do with the cursor before the
-    closing backtick (electric-pair leaves it there), which goes as well; a
-    key that completes too completes there. CODE's first word may
+    it, backticks and all, the cursor past the closing backtick. CODE's first word may
     name an engine (sh js py, and those in @dabbrev-engines), which then runs
     the rest; else sh runs it all, unless @dabbrev-eval is engines (an engine
     must be named) or off."""
@@ -1442,20 +1439,15 @@ class Eval:
 
     def typed(self, pane, key):
         m = CODE_CLOSED.search(pane.before)
-        if m and pane.before.count('`') % 2 == 0:
-            typed = m.group()
-        else:
-            m = CODE_OPEN.search(pane.before)
-            if not (key == 'eval' and m and pane.after.startswith('`') and pane.before.count('`') % 2):
-                return None
-            typed = m.group() + '`'                     # on past the cursor, to its closer
+        if not m or pane.before.count('`') % 2:
+            return None
         # The options last: most presses have no code before the cursor.
         mode = tmux('show-options', '-gqv', EVAL_OPTION).strip() or 'on'
         if key != eval_press() or mode == 'off':
             return None
         if mode == 'engines' and not self.engine(m.group(1))[0]:
             return None
-        return m.start(), typed
+        return m.start(), m.group()
 
     @staticmethod
     def engine(code):
@@ -1893,7 +1885,7 @@ def start(pane, key, backends=BACKENDS):
     tight = present(pane.after, close)          # it is there already (,rr's "|")
     state = {'backend': backend.name, 'start': found[0],
              'close': '' if tight else close, 'tight': tight,
-             # what was typed may go on past the cursor (eval's closing backtick)
+             # what was typed may go on past the cursor (spell, in a word)
              'typed_back': len(pane.before[:found[0]] + found[1]) - len(pane.before),
              'open': tmux('show-options', '-gqv', SLASH_OPTION).strip() == 'on',
              'levels': [{'none': found[1], 'alts': alts, 'index': len(alts)}]}
@@ -1982,7 +1974,8 @@ def undo(pane):
 
 def bind():
     """Bind the keys in @dabbrev-key and @dabbrev-undo-key without the prefix,
-    @dabbrev-eval-key when it is a key of its own, and Tab in the programs named in @dabbrev-tab-commands; unbind what was
+    @dabbrev-eval-key when it is a key of its own, and Tab in the programs
+    named in @dabbrev-tab-commands; unbind what was
     bound before and no longer is."""
     script = os.path.abspath(__file__)
     programs = tmux('show-options', '-gqv', TAB_OPTION)

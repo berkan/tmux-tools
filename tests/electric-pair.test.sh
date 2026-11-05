@@ -327,11 +327,13 @@ editor; ran '`' e c h o ' ' h i Tab
 expect "@dabbrev-eval-key Tab: Tab there steps over" '`echo hi`|' "$(line)"
 ran Tab
 expect "  ... and Tab past it runs it" 'hi|' "$(line)"
-tmux set -g @dabbrev-eval-key M-e
+tmux set -g @dabbrev-eval-key F5
 python3 "$SCRATCH/bin/tmux-dabbrev" bind
 python3 "$EP" bind
-editor; ran '`' e c h o ' ' h i M-e
-expect "@dabbrev-eval-key M-e: before the closer, it runs it" 'hi|' "$(line)"
+editor; ran '`' e c h o ' ' h i '`' F5
+expect "@dabbrev-eval-key F5: past the closer, it runs it" 'hi|' "$(line)"
+editor; ran '`' e c h o ' ' h i F5
+expect "  ... before the closer, it does not" '`echo hi|`' "$(line)"
 editor; ran '`' h Tab
 expect "  ... Tab steps over, as any pair" '`h`|' "$(line)"
 tmux set -gu @dabbrev-eval-key

@@ -121,7 +121,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
 | `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
 | `@dabbrev-spaced-marks` | the marks whose argument may also be one space after them, as `^ The` or `\ some text` [none]; for marks that do not come before a space in ordinary text, such as `'^_\'` (with `-` `.` `=` `,`, prose like `- item` would be read as an operator) |
-| `@dabbrev-eval-key` | the key that runs `` `code` `` [the same as `@dabbrev-key`, `M-/`]; another key (`M-e`), bound for it alone, also runs it from before the closing backtick; `Tab`: Tab runs it |
+| `@dabbrev-eval-key` | the key that runs `` `code` `` [the same as `@dabbrev-key`, `M-/`]; another key is bound for it alone; `Tab`: Tab runs it |
 | `@dabbrev-eval` | which `` `code` `` runs [`on`: any; with no engine named, `sh`]; `engines`: only with an engine named (`` `sh ls` ``); `off`: none |
 | `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
 | `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |

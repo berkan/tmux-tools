@@ -353,8 +353,8 @@ expect('@dabbrev-eval-key M-/: as the default', ['hi'], [], '`echo hi`', key='ex
 OPTIONS['@dabbrev-eval-key'] = 'Tab'
 expect('@dabbrev-eval-key Tab: Tab runs it', ['hi'], [], '`echo hi`', key='tab')
 not_run('  ... M-/ does not', '`echo hi`')
-OPTIONS['@dabbrev-eval-key'] = 'M-e'
-expect('@dabbrev-eval-key M-e, a key of its own: it runs it', ['hi'], [], '`echo hi`', key='eval')
+OPTIONS['@dabbrev-eval-key'] = 'F5'
+expect('@dabbrev-eval-key F5, a key of its own: it runs it', ['hi'], [], '`echo hi`', key='eval')
 not_run('  ... M-/ does not', '`echo hi`')
 not_run('  ... nor Tab', '`echo hi`', key='tab')
 del OPTIONS['@dabbrev-eval-key']
@@ -365,9 +365,9 @@ check('M-/ before the closing backtick does not run it', taken is None, taken)
 OPTIONS['@dabbrev-eval-key'] = 'Tab'
 taken = d.Eval().typed(Pane([], '`echo hi', '`'), 'tab')
 check('  ... nor does Tab, as the key', taken is None, taken)
-OPTIONS['@dabbrev-eval-key'] = 'M-e'
+OPTIONS['@dabbrev-eval-key'] = 'F5'
 taken = d.Eval().typed(Pane([], '`echo hi', '`'), 'eval')
-check('  ... a key of its own does', taken == (2, '`echo hi`'), taken)
+check('  ... nor does a key of its own', taken is None, taken)
 del OPTIONS['@dabbrev-eval-key']
 check('Tab before the closing backtick: steps over, a pair as any', steps('`src/fo', '`'), False)
 check('  ... before another closer, past code: steps over', steps('(`date`', ')'), False)
@@ -376,7 +376,7 @@ check('  ... @dabbrev-eval off: the same', steps('`src/fo', '`'), False)
 OPTIONS['@dabbrev-eval'] = 'engines'
 check('  ... @dabbrev-eval engines: the same', steps('`src/fo', '`'), False)
 del OPTIONS['@dabbrev-eval']
-OPTIONS['@dabbrev-eval-key'] = 'M-e'
+OPTIONS['@dabbrev-eval-key'] = 'F5'
 check('  ... a key of its own: the same', steps('`src/fo', '`'), False)
 OPTIONS['@dabbrev-eval-key'] = 'Tab'
 check('  ... @dabbrev-eval-key Tab: the same, and past it Tab runs it', steps('`src/fo', '`'), False)

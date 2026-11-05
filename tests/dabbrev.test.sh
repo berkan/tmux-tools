@@ -979,7 +979,7 @@ editor 'gamma'
 typed '`echo ga`'; dab expand
 expect "  ... M-/ past it: not run" '`echo ga`' "$(line)"
 tmux set -gu @dabbrev-eval
-tmux set -g @dabbrev-eval-key M-e
+tmux set -g @dabbrev-eval-key F5
 editor 'gamma'
 typed '`echo hi`'; dab eval
 expect "@dabbrev-eval-key, a key of its own: runs it" 'hi|2' "$(line)|$(cursor)"
@@ -990,9 +990,7 @@ typed 'word'; dab eval
 expect "  ... with no code before the cursor: nothing, and no key sent" '0 word' "$(tabs) $(line)"
 editor 'gamma'
 typed 'say `echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab eval
-expect "  ... before the closing backtick too: that goes as well" 'say hi|6' "$(line)|$(cursor)"
-dab undo
-expect "  ... M-? puts it back, the cursor where it was" 'say `echo hi`|12' "$(line)|$(cursor)"
+expect "  ... before the closing backtick: not run" 'say `echo hi`|12' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-eval-key
 
 echo "a closer after the cursor, past spaces: there already, not added again"
@@ -1063,13 +1061,13 @@ expect "M-? undoes" 1 \
 expect "M-\$ corrects the spelling" 1 \
     "$(tmux list-keys -T root | grep -cE "root +.?M-\\$.? +run-shell \"[^ ]*tmux-dabbrev spell '#\{pane_id\}'\"")"
 expect "  ... no key for eval unless it has its own" 0 "$(tmux list-keys -T root | grep -c 'tmux-dabbrev eval')"
-tmux set -g @dabbrev-eval-key M-e
+tmux set -g @dabbrev-eval-key F5
 python3 "$DAB" bind
-expect "  ... @dabbrev-eval-key M-e: bound" 1 "$(tmux list-keys -T root | grep -cE "root +M-e +run-shell \"[^ ]*tmux-dabbrev eval '#\{pane_id\}'\"")"
+expect "  ... @dabbrev-eval-key F5: bound" 1 "$(tmux list-keys -T root | grep -cE "root +F5 +run-shell \"[^ ]*tmux-dabbrev eval '#\{pane_id\}'\"")"
 expect "  ... M-/ still completes" 1 "$(tmux list-keys -T root | grep -cE "root +M-/ +run-shell \"[^ ]*tmux-dabbrev expand '#\{pane_id\}'\"")"
 tmux set -g @dabbrev-eval-key M-/
 python3 "$DAB" bind
-expect "  ... back to M-/: M-e unbound" 0 "$(tmux list-keys -T root | grep -cE 'root +M-e ')"
+expect "  ... back to M-/: F5 unbound" 0 "$(tmux list-keys -T root | grep -cE 'root +F5 ')"
 expect "  ... M-/ is not taken from completing" 1 "$(tmux list-keys -T root | grep -cE "root +M-/ +run-shell \"[^ ]*tmux-dabbrev expand '#\{pane_id\}'\"")"
 tmux set -gu @dabbrev-eval-key
 expect "Tab runs it in the configured programs, else is sent on" 1 \
