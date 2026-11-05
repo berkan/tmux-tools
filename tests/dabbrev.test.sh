@@ -955,10 +955,8 @@ expect "  ... M-/ again runs it" 'say hi|6' "$(line)|$(cursor)"
 dab expand
 expect "  ... M-/ on the result: the code back, as past the last completion" 'say `echo hi`|13' "$(line)|$(cursor)"
 editor 'gamma'
-typed 'say `echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab expand
-expect "the cursor before the closing backtick (as electric-pair leaves it): that goes too" 'say hi|6' "$(line)|$(cursor)"
-dab undo
-expect "  ... M-? puts it back, the cursor where it was" 'say `echo hi`|12' "$(line)|$(cursor)"
+typed '`echo ga`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab expand
+expect "the cursor before the closing backtick: M-/ completes, it does not run it" '`echo gamma `|12' "$(line)|$(cursor)"
 editor 'gamma'
 typed "\`printf 'a\\nb'\`"; dab expand
 expect "output of several lines goes in as a paste (not as Enter)" $'a\nb' "$(line)"
@@ -969,17 +967,17 @@ editor 'gamma'
 typed '`echo ga`'; dab tab
 expect "Tab after the span does not run it" '`echo ga`' "$(line)"
 editor 'gamma'
-typed '`ga`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
-expect "Tab before the closing backtick (electric-pair's) completes, against it" '`gamma`|6' "$(line)|$(cursor)"
+typed '`echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
+expect "Tab before the closing backtick (electric-pair's) steps over it" '`echo hi`|9' "$(line)|$(cursor)"
 dab expand
-expect "  ... and M-/ then cycles that completion, it does not run it" '`ga`|3' "$(line)|$(cursor)"
+expect "  ... and M-/ there runs it" 'hi|2' "$(line)|$(cursor)"
 tmux set -g @dabbrev-eval engines
 editor 'gamma'
 typed '`echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
 expect "@dabbrev-eval engines, none named: Tab before the closing backtick steps over it" '`echo hi`|9' "$(line)|$(cursor)"
 editor 'gamma'
-typed '`echo ga`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab expand
-expect "  ... M-/ completes there, it is not run" '`echo gamma `|12' "$(line)|$(cursor)"
+typed '`echo ga`'; dab expand
+expect "  ... M-/ past it: not run" '`echo ga`' "$(line)"
 tmux set -gu @dabbrev-eval
 tmux set -g @dabbrev-eval-key M-e
 editor 'gamma'
@@ -990,6 +988,11 @@ expect "  ... M-? puts it back" '`echo hi`|9' "$(line)|$(cursor)"
 editor 'gamma'
 typed 'word'; dab eval
 expect "  ... with no code before the cursor: nothing, and no key sent" '0 word' "$(tabs) $(line)"
+editor 'gamma'
+typed 'say `echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab eval
+expect "  ... before the closing backtick too: that goes as well" 'say hi|6' "$(line)|$(cursor)"
+dab undo
+expect "  ... M-? puts it back, the cursor where it was" 'say `echo hi`|12' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-eval-key
 
 echo "a closer after the cursor, past spaces: there already, not added again"

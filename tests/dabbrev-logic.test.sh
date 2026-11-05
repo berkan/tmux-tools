@@ -360,17 +360,26 @@ not_run('  ... nor Tab', '`echo hi`', key='tab')
 del OPTIONS['@dabbrev-eval-key']
 def steps(before, after):
     return d.steps_over(Pane([], before, after))
-check('Tab before the closing backtick: completes, as M-/ takes the code', not steps('`src/fo', '`'), True)
+taken = d.Eval().typed(Pane([], '`echo hi', '`'), 'expand')
+check('M-/ before the closing backtick does not run it', taken is None, taken)
+OPTIONS['@dabbrev-eval-key'] = 'Tab'
+taken = d.Eval().typed(Pane([], '`echo hi', '`'), 'tab')
+check('  ... nor does Tab, as the key', taken is None, taken)
+OPTIONS['@dabbrev-eval-key'] = 'M-e'
+taken = d.Eval().typed(Pane([], '`echo hi', '`'), 'eval')
+check('  ... a key of its own does', taken == (2, '`echo hi`'), taken)
+del OPTIONS['@dabbrev-eval-key']
+check('Tab before the closing backtick: steps over, a pair as any', steps('`src/fo', '`'), False)
 check('  ... before another closer, past code: steps over', steps('(`date`', ')'), False)
 OPTIONS['@dabbrev-eval'] = 'off'
-check('  ... @dabbrev-eval off: steps over, a pair as any', steps('`src/fo', '`'), False)
+check('  ... @dabbrev-eval off: the same', steps('`src/fo', '`'), False)
 OPTIONS['@dabbrev-eval'] = 'engines'
-check('  ... @dabbrev-eval engines, no engine named: steps over', steps('`src/fo', '`'), False)
+check('  ... @dabbrev-eval engines: the same', steps('`src/fo', '`'), False)
 del OPTIONS['@dabbrev-eval']
 OPTIONS['@dabbrev-eval-key'] = 'M-e'
-check('  ... a key of its own, so M-/ completes there: steps over', steps('`src/fo', '`'), False)
+check('  ... a key of its own: the same', steps('`src/fo', '`'), False)
 OPTIONS['@dabbrev-eval-key'] = 'Tab'
-check('  ... @dabbrev-eval-key Tab: no step, it runs', not steps('`src/fo', '`'), True)
+check('  ... @dabbrev-eval-key Tab: the same, and past it Tab runs it', steps('`src/fo', '`'), False)
 del OPTIONS['@dabbrev-eval-key']
 
 print('hints (@dabbrev-hints): what M-/ cycles to')
@@ -436,7 +445,7 @@ check('(_The o|): a sugar with words', not steps('(_The o'), steps('(_The o'))
 check('(1. 2.|): a chain', not steps('(1. 2.'), steps('(1. 2.'))
 check('(,re|): a snippet', not steps('(,re'), steps('(,re'))
 check('(~/de|): a path', not steps('(~/de'), steps('(~/de'))
-check('`echo hi|`: code', not steps('`echo hi', '`'), steps('`echo hi', '`'))
+check('`echo hi|`: code, a word as any, steps over', steps('`echo hi', '`'), steps('`echo hi', '`'))
 check('nothing after the cursor: no step', not steps('(hel', ''), steps('(hel', ''))
 check('not a closer after the cursor: no step', not steps('(hel', 'x'), steps('(hel', 'x'))
 

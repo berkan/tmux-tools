@@ -121,7 +121,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-snippets` | the snippets file [`~/.config/tmux-dabbrev/snippets`] |
 | `@dabbrev-sugars` | the sugar file [`~/.config/tmux-dabbrev/sugars`] |
 | `@dabbrev-spaced-marks` | the marks whose argument may also be one space after them, as `^ The` or `\ some text` [none]; for marks that do not come before a space in ordinary text, such as `'^_\'` (with `-` `.` `=` `,`, prose like `- item` would be read as an operator) |
-| `@dabbrev-eval-key` | the key that runs `` `code` `` [the same as `@dabbrev-key`, `M-/`]; another key (`M-e`), bound for it alone, leaves `M-/` to complete in `` `...` `` and Tab to step out, as with any pair; `Tab`: Tab runs it |
+| `@dabbrev-eval-key` | the key that runs `` `code` `` [the same as `@dabbrev-key`, `M-/`]; another key (`M-e`), bound for it alone, also runs it from before the closing backtick; `Tab`: Tab runs it |
 | `@dabbrev-eval` | which `` `code` `` runs [`on`: any; with no engine named, `sh`]; `engines`: only with an engine named (`` `sh ls` ``); `off`: none |
 | `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
 | `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |
@@ -226,7 +226,7 @@ input, so it goes by what the screen shows either side of the cursor.
 | a closer, or a quote, with the same right after the cursor | steps over it |
 | a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
 | `BSpace` in an empty pair it typed | takes both |
-| `Tab` with a closer right after the cursor | steps over it after a word: `(hello\|)` to `(hello)\|`; but after an operator, a snippet, a pipe, a path, or in `` `...` `` (`re: "=tm\|"`, `` `src/fo\|` ``) it completes, as dabbrev's Tab: `re: "tmux\|"`; elsewhere Tab does what it did (dabbrev's completion) |
+| `Tab` with a closer right after the cursor | steps over it after a word: `(hello\|)` to `(hello)\|`; but after an operator, a snippet, a pipe, a path (`re: "=tm\|"`, `` `src/fo\|` ``) it completes, as dabbrev's Tab: `re: "tmux\|"`; elsewhere Tab does what it did (dabbrev's completion) |
 
 | option | |
 |---|---|
@@ -331,18 +331,14 @@ and a backslash. Names are letters, digits and `_`. The file is read at each
 
 `` `code` `` + `M-/` runs the code and puts what it prints in place of it,
 backticks and all, the line breaks at its end left out (several lines go
-in as a paste, not as Enter). `M-/` right before the closing backtick, where
-electric-pair leaves the cursor, does it too. The first word may name an
+in as a paste, not as Enter). Before the closing backtick, where electric-pair
+leaves the cursor, `M-/` completes as anywhere: Tab or the backtick steps past
+it, and `M-/` there runs the code. The first word may name an
 engine, which runs the rest: `` `py 2**10` `` → `1024`, `` `js 1+2` `` → `3`;
 with none named, `sh` runs it all (`@dabbrev-eval`). It runs in the pane's
 folder, wherever tmux runs (inside the container, in ppi). On a failure the
 code stays and the error shows in the status line; `M-?` or `M-/` again
 takes a result back (not what the code did).
-
-As `M-/` runs what is in `` `...` ``, Tab is what completes there
-(`` `src/fo| `` + Tab → `` `src/foo.py| ``), and `M-/` then cycles that
-completion; to run it after one, go past the closing backtick first. With
-`@dabbrev-eval-key` set to another key, none of this applies.
 
 Built in: `sh` (`sh -c {}`), `js` (`node -p {}`), `py` (python3, `eval` of
 the code, printed). The file (`@dabbrev-engines`) adds to them or replaces
@@ -355,7 +351,7 @@ rb      ruby -e "p eval(ARGV[0])" {}
 bc      bc -l
 ```
 
-Code in a prompt is easy to run by accident: `M-/` in or right after a code
+Code in a prompt is easy to run by accident: `M-/` right after a code
 span (`` `git push --force` ``) runs it. `@dabbrev-eval engines` runs only spans
 that name their engine. Only the cursor's row is read, so code must be on
 one row.

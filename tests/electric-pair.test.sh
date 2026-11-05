@@ -302,34 +302,36 @@ tmux set -g @electric-pair-commands "$(tmux display -p -t "$PANE" '#{pane_curren
 tmux set -g @dabbrev-tab-commands "$(tmux display -p -t "$PANE" '#{pane_current_command}')"
 python3 "$SCRATCH/bin/tmux-dabbrev" bind
 python3 "$EP" bind
-editor; ran '`' e c h o ' ' h i M-/
-expect "\`echo hi\` (its closer typed by electric-pair) + M-/: what it prints" 'hi|' "$(line)"
-ran M-?
-expect "  ... M-? takes it back" '`echo hi|`' "$(line)"
 editor; ran s a y ' ' '`' e c h o ' ' h i '`' M-/
-expect "  ... the closer typed (stepped over), then M-/" 'say hi|' "$(line)"
-editor; ran '`' p y ' ' 2 '*' '*' 1 0 M-/
+expect "\`echo hi\` + M-/ (its closer typed, so stepped over): what it prints" 'say hi|' "$(line)"
+ran M-?
+expect "  ... M-? takes it back" 'say `echo hi`|' "$(line)"
+editor; ran '`' e c h o ' ' h i Tab M-/
+expect "  ... or past the closer by Tab" 'hi|' "$(line)"
+editor; ran '`' p y ' ' 2 '*' '*' 1 0 '`' M-/
 expect "  ... \`py 2**10\`" '1024|' "$(line)"
-editor; ran '`' e x i t ' ' 3 M-/
-expect "  ... a failure: left as it was" '`exit 3|`' "$(line)"
-editor; ran h e l l o ' ' '`' h e l Tab
-expect "Tab inside \`...\` completes, ending against the closer" 'hello `hello|`' "$(line)"
-editor; key '`' e c h o ' ' h i Tab
+editor; ran '`' e x i t ' ' 3 '`' M-/
+expect "  ... a failure: left as it was" '`exit 3`|' "$(line)"
+editor; ran h e l l o ' ' '`' h e l M-/
+expect "M-/ before the closing backtick completes, against it" 'hello `hello|`' "$(line)"
+editor; ran '`' e c h o ' ' h i M-/
 expect "  ... it does not run it" '`echo hi|`' "$(line)"
-editor; ran e c h o ' ' '`' e c Tab '`' M-/
-expect "  ... past the closer, M-/ runs what Tab completed" 'echo |' "$(line)"
+editor; ran e c h o ' ' '`' e c M-/ Tab M-/
+expect "  ... completed, then past the closer, M-/ runs it" 'echo |' "$(line)"
+editor; ran '`' e c h o ' ' h i Tab
+expect "Tab there steps over, it does not run it" '`echo hi`|' "$(line)"
 tmux set -g @dabbrev-eval-key Tab
 python3 "$SCRATCH/bin/tmux-dabbrev" bind
 python3 "$EP" bind
 editor; ran '`' e c h o ' ' h i Tab
-expect "@dabbrev-eval-key Tab: Tab runs it" 'hi|' "$(line)"
-editor; ran h e l l o ' ' '`' h e l M-/
-expect "  ... and M-/ completes in it" 'hello `hello|`' "$(line)"
+expect "@dabbrev-eval-key Tab: Tab there steps over" '`echo hi`|' "$(line)"
+ran Tab
+expect "  ... and Tab past it runs it" 'hi|' "$(line)"
 tmux set -g @dabbrev-eval-key M-e
 python3 "$SCRATCH/bin/tmux-dabbrev" bind
 python3 "$EP" bind
 editor; ran '`' e c h o ' ' h i M-e
-expect "@dabbrev-eval-key M-e: it runs it" 'hi|' "$(line)"
+expect "@dabbrev-eval-key M-e: before the closer, it runs it" 'hi|' "$(line)"
 editor; ran '`' h Tab
 expect "  ... Tab steps over, as any pair" '`h`|' "$(line)"
 tmux set -gu @dabbrev-eval-key

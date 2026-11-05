@@ -6,9 +6,9 @@
 # keys: Claude Code, pi, a shell. Completions come from a backend, the first
 # in BACKENDS whose trigger matches the text before the cursor:
 #
-#   eval          M-/ (@dabbrev-eval-key) after `CODE` (or before its closing
-#                 backtick, which goes too): what CODE prints, in place of
-#                 it, backticks and all (Eval). A first word naming an engine
+#   eval          M-/ (@dabbrev-eval-key) after `CODE` (a key of its own also
+#                 before the closing backtick, which goes too): what CODE
+#                 prints, in place of it, backticks and all (Eval). A first word naming an engine
 #                 (sh js py, and those in @dabbrev-engines) runs the rest with
 #                 it; else sh runs it all, unless @dabbrev-eval is engines
 #                 (then it must be named) or off. In the pane's folder, for at most
@@ -89,8 +89,8 @@
 #                 two letters before the cursor) or it has no match.
 #   tab-step      Tab as electric-pair hands it on with a closer right after
 #                 the cursor: a step over it after a word (or nothing), but
-#                 after an operator, a snippet, a pipe or a path, or in code
-#                 the completion key runs, Tab (steps_over).
+#                 after an operator, a snippet, a pipe or a path, Tab
+#                 (steps_over).
 #   undo (M-?)    take back the last press; again, the one before, back to
 #                 what was typed.
 #   spell (M-$)   correct the last misspelled word left of the cursor on its
@@ -1431,8 +1431,9 @@ def eval_press():
 
 class Eval:
     """`CODE` + the key that runs it (eval_key): what CODE prints, in place of
-    it, backticks and all; the cursor before the closing backtick will do
-    (electric-pair leaves it there), which goes as well. CODE's first word may
+    it, backticks and all. A key of its own will do with the cursor before the
+    closing backtick (electric-pair leaves it there), which goes as well; a
+    key that completes too completes there. CODE's first word may
     name an engine (sh js py, and those in @dabbrev-engines), which then runs
     the rest; else sh runs it all, unless @dabbrev-eval is engines (an engine
     must be named) or off."""
@@ -1445,7 +1446,7 @@ class Eval:
             typed = m.group()
         else:
             m = CODE_OPEN.search(pane.before)
-            if not (m and pane.after.startswith('`') and pane.before.count('`') % 2):
+            if not (key == 'eval' and m and pane.after.startswith('`') and pane.before.count('`') % 2):
                 return None
             typed = m.group() + '`'                     # on past the cursor, to its closer
         # The options last: most presses have no code before the cursor.
@@ -1938,12 +1939,9 @@ def steps_over(pane):
     """Whether Tab before a closer (one of @tmux-tools-pairs right after the
     cursor) steps over it: unless what is before the cursor asks for more, an
     operator or chain (=tm, _The, 1. 2.), a snippet, a pipe, code, a path or
-    a word for the program; a word alone (or nothing) does not. Nor does code
-    that the completion key runs."""
+    a word for the program; a word alone (or nothing) does not."""
     if not pane.after or pane.after[0] not in set(pane.pairs().values()):
         return False
-    if pane.after[0] == '`' and eval_press() == 'expand' and Eval().typed(pane, 'expand'):
-        return False                            # M-/ would run it: Tab is what completes in it
     for backend in BACKENDS:
         found = backend.typed(pane, 'tab')
         if found:
