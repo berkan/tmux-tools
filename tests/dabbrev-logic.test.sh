@@ -233,6 +233,28 @@ expect('  ... one just ended: it, its stop and all', ['(Then more.)'], PIPED, 'O
 expect('  ... ! ? : end one too', ['(and more)'], PIPED, 'Why? Yes: and more |.(')
 expect('  ... the first: back to where the input starts', ['(One here)'], PIPED, 'One here |.(')
 expect('|2.(: the last 2 sentences', ['(One here. Then more)'], PIPED, 'Zero. One here. Then more |2.(')
+expect('  ... more than there are: back to where the input starts', ['(One here. Then more)'], PIPED, 'One here. Then more |5.(')
+def scoped_after_prompt(before, prompt_end):
+    pane = Pane(PIPED, before)
+    pane.before = pane.before[2:]                   # the row as BEFORE has it, its prompt in it
+    pane.input_start = lambda: prompt_end
+    found = d.Pipe().typed(pane, 'tab')
+    return found and found[1]
+got = scoped_after_prompt('a: > one two |.(', 5)
+check('  ... a stop before where the input starts is none: not into the prompt', got == 'one two |.(', got)
+got = scoped_after_prompt('a: > One. Two |2.(', 5)
+check('  ... |2. the same', got == 'One. Two |2.(', got)
+got = scoped_after_prompt('a: > One. Two |.(', 5)
+check('  ... a stop in the input still counts', got == 'Two |.(', got)
+OPTIONS['@dabbrev-sentence-line-start'] = 'off'
+taken = d.Pipe().typed(Pane(PIPED, 'One here |.('), 'tab')
+check('@dabbrev-sentence-line-start off: no stop, so |. takes nothing', taken is None, taken)
+taken = d.Pipe().typed(Pane(PIPED, 'One here. Then more |2.('), 'tab')
+check('  ... |2. with one stop the same', taken is None, taken)
+expect('  ... with a stop, as ever', ['(Then more)'], PIPED, 'One here. Then more |.(')
+got = scoped_after_prompt('a: > one two |.(', 5)
+check('  ... a stop before the input is none', got is None, got)
+del OPTIONS['@dabbrev-sentence-line-start']
 expect('|-(: the list item the row starts', ['(buy milk)'], PIPED, '- buy milk |-(')
 expect('  ... a * item', ['(buy milk)'], PIPED, '* buy milk |-(')
 expect('  ... a numbered item', ['(eggs)'], PIPED, '2. eggs |-(')

@@ -126,6 +126,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
 | `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |
 | `@dabbrev-pipe-completion` | right after a completion (`_h` + Tab, then `\|(` + Tab), the pipe's LEFT is that completion, whole: `(hello world)` [on]; `off`: as anywhere else (below) |
+| `@dabbrev-sentence-line-start` | where the input starts ends a sentence too, so that `One here \|.(` gives `(One here)` [on]; `off`: a `\|.` with no stop to go back past takes nothing |
 | `@dabbrev-slash-open` | `on`: a completion that ends in `/` (a coloured `docs/`) ends there, without the space and not closed, as a folder does; typing on narrows it, and Tab completes what starts with it (`docs/design.md`) [off] |
 | `@dabbrev-hints` | after each press, what `M-/` cycles to, in the status line: `M-/ 1/3: [docs/] · docs/design.md · docs/evidence/` [on: for 3 seconds]; a number: so many milliseconds; `off` |
 
@@ -431,7 +432,7 @@ LEFT then being the text as typed; a count before the unit takes that many:
 | after the `\|` | LEFT is |
 |---|---|
 | `3` | the last 3 words: blank to blank, a pair within one taken whole |
-| `.`, `2.` | back to the start of the sentence, of the last 2 (past a `.` `!` `?` or `:` and a blank; one just ended counts) |
+| `.`, `2.` | back to the start of the sentence, of the last 2 (past a `.` `!` `?` or `:` and a blank; one just ended counts); with none in the input, where the input starts, as `^` (`@dabbrev-sentence-line-start`) |
 | `-` | the list item the input starts with, after its `-` `*` `+` or `1.` |
 | `^` | back to where the input starts |
 

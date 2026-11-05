@@ -138,6 +138,7 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 # ... stops before it (...Then, .... a sentence without its full stop).
 RUBY_OPTION = '@dabbrev-ruby-ranges'
 PIPE_COMPLETION_OPTION = '@dabbrev-pipe-completion'
+SENTENCE_LINE_START_OPTION = '@dabbrev-sentence-line-start'
 SLASH_OPTION = '@dabbrev-slash-open'
 HINTS_OPTION, HINTS_ON, HINT_WIDTH = '@dabbrev-hints', 3000, 40      # on (the default): shown so many ms
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
@@ -1036,7 +1037,8 @@ class Pipe:
         """Where in TEXT (the cursor's row, up to the |) LEFT starts for the
         SCOPE after the |: a count of words (blank to blank, a pair within
         one taken whole), N. sentences (back past N stops: . ! ? or : and a
-        blank; one just ended is the first), the list item the input starts
+        blank; one just ended is the first; where the input starts counts as
+        one, unless @dabbrev-sentence-line-start is off), the list item the input starts
         (- * + or 1. 1) and blanks: LEFT after them), ^ where the input
         starts. Not before where the input starts, which only the program
         knows (Pane.input_start), asked when the scope gets back to the
@@ -1057,8 +1059,11 @@ class Pipe:
                     p = None
                     break
                 p = stops[-1] + 1
-            start = floor() if p is None else p + len(text[p:]) - len(text[p:].lstrip())
-            start = max(start, floor()) if p is None or not text[:p].strip() else start
+            start = None if p is None else p + len(text[p:]) - len(text[p:].lstrip())
+            if start is None or start < floor():        # no stop in the input
+                if tmux('show-options', '-gqv', SENTENCE_LINE_START_OPTION).strip() == 'off':
+                    return None
+                start = floor()
         else:
             pairs = pane.pairs()
             closers = {c: o for o, c in pairs.items() if c != o}
