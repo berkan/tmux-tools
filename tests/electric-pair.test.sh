@@ -104,7 +104,23 @@ expect "nested" '[{|}]' "$(line)"
 editor; key f '('
 expect "after a word too: f(|)" 'f(|)' "$(line)"
 editor; key w o r d Left Left Left Left '('
-expect "before a word: ( alone" '(|word' "$(line)"
+expect "before a word too: (|)word" '(|)word' "$(line)"
+editor; key 7 Left '['
+expect "  ... before a digit" '[|]7' "$(line)"
+editor; key w o r d Left Left Left Left '"'
+expect "  ... a quote" '"|"word' "$(line)"
+editor; key w o r d Left Left Left Left '(' BSpace
+expect "  ... Backspace takes the pair, the word left" '|word' "$(line)"
+editor; key d o n t Left "'"
+expect "  ... but a quote after a letter too: alone" "don'|t" "$(line)"
+tmux set -g @electric-pair-before-word off
+editor; key w o r d Left Left Left Left '('
+expect "@electric-pair-before-word off: before a word, ( alone (read at each press)" '(|word' "$(line)"
+editor; key w o r d Left Left Left Left '"'
+expect "  ... a quote too" '"|word' "$(line)"
+editor; key w o r d ' ' '('
+expect "  ... elsewhere it still pairs" 'word (|)' "$(line)"
+tmux set -gu @electric-pair-before-word
 editor; key a '\' '('
 expect "after a backslash: ( alone" 'a\(|' "$(line)"
 
@@ -172,8 +188,10 @@ editor; key a b BSpace
 expect "BSpace on text" 'a|' "$(line)"
 editor; key a ')'
 expect "a closer with none after" 'a)|' "$(line)"
+tmux set -g @electric-pair-before-word off
 editor; key x y Left '('
-expect "an opener before a letter" 'x(|y' "$(line)"
+expect "an opener before a letter, with @electric-pair-before-word off" 'x(|y' "$(line)"
+tmux set -gu @electric-pair-before-word
 mv "$EP.away" "$EP"
 editor; key '(' a
 mv "$EP" "$EP.away"

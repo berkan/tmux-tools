@@ -2,8 +2,9 @@
 # tmux-electric-pair — brackets and quotes typed in pairs, as Emacs'
 # electric-pair-mode, from what the screen shows around the program's cursor
 # (tmux cannot see the program's input):
-#   an opener   ( [ { types its pair, the cursor between: (|); not before a
-#               letter or digit, nor after a backslash
+#   an opener   ( [ { types its pair, the cursor between: (|); not after a
+#               backslash, nor, with @electric-pair-before-word off, before a
+#               letter or digit
 #   a quote     " ' ` the same, and not after a letter or digit either (don't)
 #   a closer    ) ] } or a quote, with the same right after the cursor, steps
 #               over it instead of typing a second; and right where dabbrev
@@ -31,8 +32,9 @@
 # For speed, the bindings decide what they can in tmux's formats, with no
 # process (the character after the cursor is #{cursor_character}): a closer,
 # Tab, BSpace but in an empty pair it typed, an opener before a letter or
-# digit. The rest needs the character before the cursor too:
-# `tmux-electric-pair key KEY PANE X Y PAIRS EMPTY` reads the row and types
+# digit when @electric-pair-before-word is off. The rest needs the character
+# before the cursor too:
+# `tmux-electric-pair key KEY PANE X Y PAIRS EMPTY BEFORE_WORD` reads the row and types
 # KEY; after typing or taking a pair, it waits (briefly) for the program to
 # show its cursor where that leaves it, so that the next key's formats read
 # the screen as it now is. The bindings run in the foreground, so keys typed
@@ -108,6 +110,9 @@ TAB_ON = '#{!=:#{@electric-pair-tab},off}'
 TAB_WAS = '@electric-pair-tab-was'
 DABBREV_TAB = re.compile(r'(tmux-dabbrev) tab ')
 
+# Pairing before a letter or digit is on unless this is off (read at each press).
+BEFORE_WORD = '@electric-pair-before-word'
+
 # The pane option holding the places (|X:Y|...) where it left an empty pair:
 # BSpace there may take both, elsewhere it is BSpace with no process.
 EMPTY = '@electric-pair-empty'
@@ -125,16 +130,17 @@ def until(pane, cy, done):
     return None
 
 
-def pairs_here(key, prev, nxt, table):
-    """Whether KEY, typed between PREV and NXT, should be paired."""
+def pairs_here(key, prev, nxt, table, before_word):
+    """Whether KEY, typed between PREV and NXT, should be paired; before a
+    letter or digit only if BEFORE_WORD (@electric-pair-before-word)."""
     quote = table[key] == key
-    return not (nxt.isalnum() or prev == '\\' or (quote and prev.isalnum()))
+    return not ((nxt.isalnum() and not before_word) or prev == '\\' or (quote and prev.isalnum()))
 
 
-def press(key, pane, cx, cy, table, empty):
+def press(key, pane, cx, cy, table, empty, before_word):
     """Type KEY (an opener, or BSpace in an empty pair: the bindings do the
     rest) into PANE, its cursor at column CX of row CY when the key was
-    pressed; TABLE the pairs, EMPTY the option of that name.
+    pressed; TABLE the pairs, EMPTY and BEFORE_WORD the options of those names.
 
     Keys typed just before may not be on the screen yet, so it is not read
     ahead of KEY: an opener goes in first, and once the screen shows it
@@ -160,7 +166,7 @@ def press(key, pane, cx, cy, table, empty):
         return
     send('-l', '--', key)
     now = until(pane, cy, lambda b, a, x, y: (x, y) != (cx, cy) and b.endswith(key))
-    if now and pairs_here(key, now[0][-2:-1], now[1][:1], table):
+    if now and pairs_here(key, now[0][-2:-1], now[1][:1], table, before_word):
         places = [p for p in places if p != f'{now[2]}:{cy}'][-20:] + [f'{now[2]}:{cy}']
         send('-l', '--', table[key], ';', 'send-keys', '-t', pane, 'Left',
              ';', 'set-option', '-p', '-t', pane, EMPTY, '|' + '|'.join(places) + '|')
@@ -192,7 +198,7 @@ def bindings(script, programs, table, tab):
     the pairs' characters and BSpace, and Tab around TAB (what Tab did
     before, a command; '' for none); and the keys they bind, but Tab."""
     gate = '#{m/r:^(%s)$,#{pane_current_command}}' % '|'.join(programs)
-    alnum = '#{m/r:^[[:alnum:]]$,#{cursor_character}}'
+    alone = '#{&&:#{==:#{%s},off},#{m/r:^[[:alnum:]]$,#{cursor_character}}}' % BEFORE_WORD
     # Each character is compared through an option, as , and } cannot be
     # written in a format.
     def after(ch):
@@ -204,7 +210,7 @@ def bindings(script, programs, table, tab):
     codes = ','.join(f'{ord(o):04X}{ord(c):04X}' for o, c in table.items())
 
     def run(key):                               # the pairs go with it, as codes
-        return 'run-shell ' + quoted(f'{script} key {key} #{{pane_id}} #{{cursor_x}} #{{cursor_y}} {codes} "#{{{EMPTY}}}"')
+        return 'run-shell ' + quoted(f'{script} key {key} #{{pane_id}} #{{cursor_x}} #{{cursor_y}} {codes} "#{{{EMPTY}}}" "#{{{BEFORE_WORD}}}"')
 
     closers = list(dict.fromkeys(table.values()))
     lines, keys = [], []
@@ -213,7 +219,7 @@ def bindings(script, programs, table, tab):
         typed = f'send-keys -l {quoted(ch)}'
         then = typed
         if ch in table:                         # an opener (a quote too): it may pair
-            then = f'if-shell -F {quoted(alnum)} {{ {typed} }} {{ {run(f"U+{ord(ch):04X}")} }}'
+            then = f'if-shell -F {quoted(alone)} {{ {typed} }} {{ {run(f"U+{ord(ch):04X}")} }}'
         if ch in closers:
             then = (f'if-shell -F {quoted(after(ch))} {{ send-keys Right }} {{ '
                     f'if-shell -F {quoted(closed(ch))} {{ set-option -pu @dabbrev-closed }} {{ {then} }} }}')
@@ -271,9 +277,9 @@ def bind():
 if __name__ == '__main__':
     if sys.argv[1:] == ['bind']:
         bind()
-    elif sys.argv[1:2] == ['key'] and len(sys.argv) == 8:
-        key, pane, cx, cy, codes, empty = sys.argv[2:]
+    elif sys.argv[1:2] == ['key'] and len(sys.argv) == 9:
+        key, pane, cx, cy, codes, empty, before_word = sys.argv[2:]
         table = {chr(int(c[:4], 16)): chr(int(c[4:], 16)) for c in codes.split(',') if c}
-        press(code(key), pane, int(cx), int(cy), table, empty)
+        press(code(key), pane, int(cx), int(cy), table, empty, before_word != 'off')
     else:
-        sys.exit('usage: tmux-electric-pair bind | key KEY PANE X Y PAIRS EMPTY')
+        sys.exit('usage: tmux-electric-pair bind | key KEY PANE X Y PAIRS EMPTY BEFORE_WORD')

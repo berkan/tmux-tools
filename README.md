@@ -220,7 +220,7 @@ input, so it goes by what the screen shows either side of the cursor.
 
 | key | does |
 |---|---|
-| an opener `(` `[` `{` | types the pair, the cursor between: `(\|)`; not before a letter or digit, nor after `\` |
+| an opener `(` `[` `{` | types the pair, the cursor between: `(\|)`, before a word too: `(\|)word`; not after `\` |
 | a quote `"` `'` `` ` `` | the same, and not after a letter or digit either (`don't`) |
 | a closer, or a quote, with the same right after the cursor | steps over it |
 | a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
@@ -231,6 +231,7 @@ input, so it goes by what the screen shows either side of the cursor.
 |---|---|
 | `@tmux-tools-pairs` | the pairs (Shared, above) |
 | `@electric-pair-commands` | programs it works in, as `@dabbrev-tab-commands` [the same]; `''` binds nothing |
+| `@electric-pair-before-word` | `off`: an opener or quote before a letter or digit is typed alone, `(\|word`, for closing it by hand after the word [on: it pairs]; read at each press |
 | `@electric-pair-tab` | `off`: Tab before a closer completes too [on: it steps over]; read at each press, so `tmux set -g @electric-pair-tab off` applies at once |
 
 With Tab stepping over, `(hel|)` + Tab steps out rather than completing
@@ -243,8 +244,9 @@ closer steps over it. electric-pair binds Tab around whatever Tab was bound
 to, so `tmux-tools.tmux` binds it after the other tools.
 
 Typing stays quick: a closer, and Backspace but in an empty pair, are
-decided by tmux itself, with no process; an opener or quote that may pair,
-or Backspace in an empty pair, takes some 30–45 ms. Keys typed meanwhile
+decided by tmux itself, with no process (and an opener before a word, with
+`@electric-pair-before-word` off); an opener or quote that may pair, or
+Backspace in an empty pair, takes some 30–45 ms. Keys typed meanwhile
 wait, in order. An opener or quote goes in before its closer is decided, so
 keys typed just before it that the program has not shown yet do not mislead
 it (`don't` typed fast).

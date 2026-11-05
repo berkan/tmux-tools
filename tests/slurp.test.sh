@@ -102,6 +102,8 @@ press 'C-)'
 expect "  ... and again" '(foo| bar baz)' "$(line)"
 press 'C-)'
 expect "  ... no word left: nothing" '(foo| bar baz)' "$(line)"
+at '[|]hello there'; press 'C-)'
+expect "a word right after the closer (a pair typed before it)" '[|hello] there' "$(line)"
 at '"hi|" there'; press 'C-)'
 expect "a quote" '"hi| there"' "$(line)"
 at '(x|) [a b] c'; press 'C-)'
