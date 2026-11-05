@@ -944,28 +944,53 @@ editor 'gamma'
 typed 'ga'; dab undo
 expect "with nothing to take back: nothing, and no key sent" "0 ga" "$(tabs) $(line)"
 
-echo "\`code\` + Tab: what it prints, in place of it"
+echo "\`code\` + M-/: what it prints, in place of it"
 editor 'gamma'
-typed 'say `echo hi`'; dab tab
+typed 'say `echo hi`'; dab expand
 expect "the span, backticks and all, replaced" 'say hi|6' "$(line)|$(cursor)"
 dab undo
 expect "  ... M-? puts it back" 'say `echo hi`|13' "$(line)|$(cursor)"
+dab expand
+expect "  ... M-/ again runs it" 'say hi|6' "$(line)|$(cursor)"
+dab expand
+expect "  ... M-/ on the result: the code back, as past the last completion" 'say `echo hi`|13' "$(line)|$(cursor)"
 editor 'gamma'
-typed 'say `echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab
+typed 'say `echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab expand
 expect "the cursor before the closing backtick (as electric-pair leaves it): that goes too" 'say hi|6' "$(line)|$(cursor)"
 dab undo
 expect "  ... M-? puts it back, the cursor where it was" 'say `echo hi`|12' "$(line)|$(cursor)"
 editor 'gamma'
-typed "\`printf 'a\\nb'\`"; dab tab
+typed "\`printf 'a\\nb'\`"; dab expand
 expect "output of several lines goes in as a paste (not as Enter)" $'a\nb' "$(line)"
 editor 'gamma'
-typed '`exit 3`'; dab tab
+typed '`exit 3`'; dab expand
 expect "a failure: the span stays, and no Tab is sent" '0 `exit 3`' "$(tabs) $(line)"
+editor 'gamma'
+typed '`echo ga`'; dab tab
+expect "Tab after the span does not run it" '`echo ga`' "$(line)"
+editor 'gamma'
+typed '`ga`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
+expect "Tab before the closing backtick (electric-pair's) completes, against it" '`gamma`|6' "$(line)|$(cursor)"
+dab expand
+expect "  ... and M-/ then cycles that completion, it does not run it" '`ga`|3' "$(line)|$(cursor)"
 tmux set -g @dabbrev-eval engines
 editor 'gamma'
-typed '`echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab
+typed '`echo hi`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab tab-step
 expect "@dabbrev-eval engines, none named: Tab before the closing backtick steps over it" '`echo hi`|9' "$(line)|$(cursor)"
+editor 'gamma'
+typed '`echo ga`'; tmux send-keys -t "$PANE" Left; sleep 0.1; dab expand
+expect "  ... M-/ completes there, it is not run" '`echo gamma `|12' "$(line)|$(cursor)"
 tmux set -gu @dabbrev-eval
+tmux set -g @dabbrev-eval-key M-e
+editor 'gamma'
+typed '`echo hi`'; dab eval
+expect "@dabbrev-eval-key, a key of its own: runs it" 'hi|2' "$(line)|$(cursor)"
+dab undo
+expect "  ... M-? puts it back" '`echo hi`|9' "$(line)|$(cursor)"
+editor 'gamma'
+typed 'word'; dab eval
+expect "  ... with no code before the cursor: nothing, and no key sent" '0 word' "$(tabs) $(line)"
+tmux set -gu @dabbrev-eval-key
 
 echo "a closer after the cursor, past spaces: there already, not added again"
 for t in '"hel| "|"hello| "' '(hel| )|(hello| )' '[hel|  ]|[hello|  ]'; do
@@ -1034,6 +1059,16 @@ expect "M-? undoes" 1 \
     "$(tmux list-keys -T root | grep -cE "root +M-\\? +run-shell \"[^ ]*tmux-dabbrev undo '#\{pane_id\}'\"")"
 expect "M-\$ corrects the spelling" 1 \
     "$(tmux list-keys -T root | grep -cE "root +.?M-\\$.? +run-shell \"[^ ]*tmux-dabbrev spell '#\{pane_id\}'\"")"
+expect "  ... no key for eval unless it has its own" 0 "$(tmux list-keys -T root | grep -c 'tmux-dabbrev eval')"
+tmux set -g @dabbrev-eval-key M-e
+python3 "$DAB" bind
+expect "  ... @dabbrev-eval-key M-e: bound" 1 "$(tmux list-keys -T root | grep -cE "root +M-e +run-shell \"[^ ]*tmux-dabbrev eval '#\{pane_id\}'\"")"
+expect "  ... M-/ still completes" 1 "$(tmux list-keys -T root | grep -cE "root +M-/ +run-shell \"[^ ]*tmux-dabbrev expand '#\{pane_id\}'\"")"
+tmux set -g @dabbrev-eval-key M-/
+python3 "$DAB" bind
+expect "  ... back to M-/: M-e unbound" 0 "$(tmux list-keys -T root | grep -cE 'root +M-e ')"
+expect "  ... M-/ is not taken from completing" 1 "$(tmux list-keys -T root | grep -cE "root +M-/ +run-shell \"[^ ]*tmux-dabbrev expand '#\{pane_id\}'\"")"
+tmux set -gu @dabbrev-eval-key
 expect "Tab runs it in the configured programs, else is sent on" 1 \
     "$(tmux list-keys -T root | grep -F 'Tab' | grep -F 'python3|claude' | grep -F 'tmux-dabbrev tab' | grep -c 'send-keys Tab')"
 tmux set -g @dabbrev-key M-.

@@ -297,33 +297,33 @@ check('  ... it is when the pairs have it', closes('<hel') == '>', closes('<hel'
 check('  ... and " is not, when they do not', closes('"hel') == '', closes('"hel'))
 del OPTIONS['@tmux-tools-pairs']
 
-print('`code` + Tab: what the code prints, in place of it')
+print('`code` + M-/: what the code prints, in place of it')
 import time
-def not_run(name, before, key='tab'):
+def not_run(name, before, key='expand'):
     taken = d.Eval().typed(Pane([], before), key)
     check(name, taken is None, taken)
-expect('`echo hi`: run by sh', ['hi'], [], '`echo hi`')
-expect('  ... after other text', ['say hi'], [], 'say `echo say hi`')
-expect('  ... its output whole, but the line breaks at its end', ['a\nb'], [], "`printf 'a\\nb\\n\\n'`")
-expect('  ... without its escape sequences (colour)', ['red'], [], "`printf '\\033[31mred\\033[0m'`")
-expect("  ... in the pane's folder", ['/'], [], '`pwd`')
-expect('`sh echo hi`: sh named', ['hi'], [], '`sh echo hi`')
-expect('`py 2**10`: python', ['1024'], [], '`py 2**10`')
-expect('`js 1+2`: node', ['3'], [], '`js 1+2`')
-not_run('M-/ does not run it', '`echo hi`', key='expand')
+expect('`echo hi`: run by sh', ['hi'], [], '`echo hi`', key='expand')
+expect('  ... after other text', ['say hi'], [], 'say `echo say hi`', key='expand')
+expect('  ... its output whole, but the line breaks at its end', ['a\nb'], [], "`printf 'a\\nb\\n\\n'`", key='expand')
+expect('  ... without its escape sequences (colour)', ['red'], [], "`printf '\\033[31mred\\033[0m'`", key='expand')
+expect("  ... in the pane's folder", ['/'], [], '`pwd`', key='expand')
+expect('`sh echo hi`: sh named', ['hi'], [], '`sh echo hi`', key='expand')
+expect('`py 2**10`: python', ['1024'], [], '`py 2**10`', key='expand')
+expect('`js 1+2`: node', ['3'], [], '`js 1+2`', key='expand')
+not_run('Tab does not run it', '`echo hi`', key='tab')
 not_run('`` (nothing inside): not code', '``')
 not_run('```echo hi```: not code', '```echo hi```')
 not_run('x`echo hi`: not after a letter', 'x`echo hi`')
 SHOWN.clear()
-expect('a failure: nothing', [], [], '`echo oops >&2; exit 3`')
+expect('a failure: nothing', [], [], '`echo oops >&2; exit 3`', key='expand')
 check('  ... its error shown', any('oops' in m for m in SHOWN), SHOWN)
 SHOWN.clear()
-expect('  ... a program that is not there', [], [], '`no-such-program-here`')
+expect('  ... a program that is not there', [], [], '`no-such-program-here`', key='expand')
 check('  ... said so', any('not found' in m for m in SHOWN), SHOWN)
 OPTIONS['@dabbrev-eval-timeout'] = '0.5'
 SHOWN.clear()
 t = time.monotonic()
-expect('@dabbrev-eval-timeout 0.5: sleep 30 stopped', [], [], '`sleep 30 & sleep 30`')
+expect('@dabbrev-eval-timeout 0.5: sleep 30 stopped', [], [], '`sleep 30 & sleep 30`', key='expand')
 check('  ... at once, its children too', time.monotonic() - t < 2, time.monotonic() - t)
 check('  ... and said so', any('0.5' in m for m in SHOWN), SHOWN)
 del OPTIONS['@dabbrev-eval-timeout']
@@ -334,17 +334,44 @@ with open(ENGINES, 'w') as f:
             'rev     python3 -c "import sys; print(sys.argv[1][::-1])" {}\n'
             'js      echo JS {}\n')
 OPTIONS['@dabbrev-engines'] = ENGINES
-expect('@dabbrev-engines: one with no {}: the code on its stdin', ['HELLO'], [], '`up hello`')
-expect('  ... one with {}: the code as that argument', ['cba'], [], '`rev abc`')
-expect('  ... one of the same name replaces the built-in', ['JS x'], [], '`js x`')
-expect('  ... the built-ins stay', ['1024'], [], '`py 2**10`')
+expect('@dabbrev-engines: one with no {}: the code on its stdin', ['HELLO'], [], '`up hello`', key='expand')
+expect('  ... one with {}: the code as that argument', ['cba'], [], '`rev abc`', key='expand')
+expect('  ... one of the same name replaces the built-in', ['JS x'], [], '`js x`', key='expand')
+expect('  ... the built-ins stay', ['1024'], [], '`py 2**10`', key='expand')
 del OPTIONS['@dabbrev-engines']
 OPTIONS['@dabbrev-eval'] = 'engines'
 not_run("@dabbrev-eval engines: no engine named, it is not run", '`echo hi`')
-expect('  ... an engine named, it is', ['hi'], [], '`sh echo hi`')
+expect('  ... an engine named, it is', ['hi'], [], '`sh echo hi`', key='expand')
 OPTIONS['@dabbrev-eval'] = 'off'
 not_run('@dabbrev-eval off: not run', '`sh echo hi`')
 del OPTIONS['@dabbrev-eval']
+OPTIONS['@dabbrev-key'] = 'M-.'
+expect('@dabbrev-eval-key unset: whatever @dabbrev-key is', ['hi'], [], '`echo hi`', key='expand')
+del OPTIONS['@dabbrev-key']
+OPTIONS['@dabbrev-eval-key'] = 'M-/'
+expect('@dabbrev-eval-key M-/: as the default', ['hi'], [], '`echo hi`', key='expand')
+OPTIONS['@dabbrev-eval-key'] = 'Tab'
+expect('@dabbrev-eval-key Tab: Tab runs it', ['hi'], [], '`echo hi`', key='tab')
+not_run('  ... M-/ does not', '`echo hi`')
+OPTIONS['@dabbrev-eval-key'] = 'M-e'
+expect('@dabbrev-eval-key M-e, a key of its own: it runs it', ['hi'], [], '`echo hi`', key='eval')
+not_run('  ... M-/ does not', '`echo hi`')
+not_run('  ... nor Tab', '`echo hi`', key='tab')
+del OPTIONS['@dabbrev-eval-key']
+def steps(before, after):
+    return d.steps_over(Pane([], before, after))
+check('Tab before the closing backtick: completes, as M-/ takes the code', not steps('`src/fo', '`'), True)
+check('  ... before another closer, past code: steps over', steps('(`date`', ')'), False)
+OPTIONS['@dabbrev-eval'] = 'off'
+check('  ... @dabbrev-eval off: steps over, a pair as any', steps('`src/fo', '`'), False)
+OPTIONS['@dabbrev-eval'] = 'engines'
+check('  ... @dabbrev-eval engines, no engine named: steps over', steps('`src/fo', '`'), False)
+del OPTIONS['@dabbrev-eval']
+OPTIONS['@dabbrev-eval-key'] = 'M-e'
+check('  ... a key of its own, so M-/ completes there: steps over', steps('`src/fo', '`'), False)
+OPTIONS['@dabbrev-eval-key'] = 'Tab'
+check('  ... @dabbrev-eval-key Tab: no step, it runs', not steps('`src/fo', '`'), True)
+del OPTIONS['@dabbrev-eval-key']
 
 print('hints (@dabbrev-hints): what M-/ cycles to')
 ALTS = [{'text': 'docs/ '}, {'text': 'docs/design.md '}, {'text': 'docs/evidence/ '}]
