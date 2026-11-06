@@ -223,6 +223,7 @@ input, so it goes by what the screen shows either side of the cursor.
 |---|---|
 | an opener `(` `[` `{` | types the pair, the cursor between: `(\|)`, before a word too: `(\|)word`; not after `\` |
 | a quote `"` `'` `` ` `` | the same, and not after a letter or digit either (`don't`) |
+| an opener or quote whose other half is on the row already | types it alone: `\|hello world"` + `"` gives `"\|hello world"`, `\|hello)` + `(` gives `(\|hello)`; a quote when the row has an odd number of it (not escaped, nor an apostrophe), an opener when a closer after the cursor has no opener of its own; as Emacs' `electric-pair-preserve-balance`. Only the cursor's row is read, so a closer on another row is not seen |
 | a closer, or a quote, with the same right after the cursor | steps over it |
 | a closer right where dabbrev's Tab has just closed the completion with it | nothing, once: `(hel` + Tab gives `(hello) `, and a `)` typed out of habit is not a second |
 | `BSpace` in an empty pair it typed | takes both |

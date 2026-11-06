@@ -6,6 +6,10 @@
 #               backslash, nor, with @electric-pair-before-word off, before a
 #               letter or digit
 #   a quote     " ' ` the same, and not after a letter or digit either (don't)
+#               Either typed alone when its other half is on the row already:
+#               a quote when the row has an odd number of it, an opener when
+#               the text after the cursor has a closer of its with no opener
+#               (|hello) gives (|hello)), as Emacs' electric-pair-preserve-balance
 #   a closer    ) ] } or a quote, with the same right after the cursor, steps
 #               over it instead of typing a second; and right where dabbrev
 #               has just closed its completion with it ("hello" |), is not
@@ -130,11 +134,39 @@ def until(pane, cy, done):
     return None
 
 
-def pairs_here(key, prev, nxt, table, before_word):
-    """Whether KEY, typed between PREV and NXT, should be paired; before a
-    letter or digit only if BEFORE_WORD (@electric-pair-before-word)."""
-    quote = table[key] == key
-    return not ((nxt.isalnum() and not before_word) or prev == '\\' or (quote and prev.isalnum()))
+def quotes(row, q):
+    """How many of the quote Q ROW has: not escaped, and not an apostrophe
+    (' between letters or digits)."""
+    return sum(1 for k, ch in enumerate(row) if ch == q and row[k - 1:k] != '\\'
+               and not (q == "'" and row[k - 1:k].isalnum() and row[k + 1:k + 2].isalnum()))
+
+
+def unopened(row, at, opener, closer):
+    """Whether ROW has a CLOSER at AT or after it that no OPENER in the row
+    matches."""
+    depth = 0
+    for k, ch in enumerate(row):
+        depth += (ch == opener) - (ch == closer)
+        if depth < 0:
+            if k >= at:
+                return True
+            depth = 0
+    return False
+
+
+def pairs_here(key, before, after, table, before_word):
+    """Whether KEY, just typed (the end of BEFORE, the row left of the cursor;
+    AFTER the rest), should be paired: not after a backslash, nor a quote
+    after a letter or digit; before a letter or digit only if BEFORE_WORD
+    (@electric-pair-before-word); and not when its other half is on the row
+    already (the quote an odd number of times, or a closer of KEY's after it
+    that no opener in the row matches)."""
+    prev, nxt, close = before[-2:-1], after[:1], table[key]
+    if (nxt.isalnum() and not before_word) or prev == '\\':
+        return False
+    if close == key:
+        return not prev.isalnum() and quotes(before[:-1] + after, key) % 2 == 0
+    return not unopened(before[:-1] + after, len(before) - 1, key, close)
 
 
 def press(key, pane, cx, cy, table, empty, before_word):
@@ -166,7 +198,7 @@ def press(key, pane, cx, cy, table, empty, before_word):
         return
     send('-l', '--', key)
     now = until(pane, cy, lambda b, a, x, y: (x, y) != (cx, cy) and b.endswith(key))
-    if now and pairs_here(key, now[0][-2:-1], now[1][:1], table, before_word):
+    if now and pairs_here(key, now[0], now[1], table, before_word):
         places = [p for p in places if p != f'{now[2]}:{cy}'][-20:] + [f'{now[2]}:{cy}']
         send('-l', '--', table[key], ';', 'send-keys', '-t', pane, 'Left',
              ';', 'set-option', '-p', '-t', pane, EMPTY, '|' + '|'.join(places) + '|')

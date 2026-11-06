@@ -79,6 +79,8 @@ python3 "$EP" bind
 # editor [DELAY] — restart the pane with the editor, DELAY seconds a redraw.
 editor() {
     : > "$SCRATCH/line"
+    # A new program: the empty pairs the last one had are not in it.
+    tmux set -pu -t "$PANE" @electric-pair-empty
     tmux respawn-pane -k -t "$PANE" "python3 $SCRATCH/editor.py $SCRATCH/line ${1:-}"
     sleep 0.4
 }
@@ -125,6 +127,25 @@ expect "  ... elsewhere it still pairs" 'word (|)' "$(line)"
 tmux set -gu @electric-pair-before-word
 editor; key a '\' '('
 expect "after a backslash: ( alone" 'a\(|' "$(line)"
+
+echo "the other half on the row already: alone"
+lefts() { local k=(); for _ in $(seq "$1"); do k+=(Left); done; key "${k[@]}"; }
+editor; key h e l l o ' ' w o r l d '"'; lefts 12; key '"'
+expect '|hello world" + ": one quote' '"|hello world"' "$(line)"
+editor; key x '"' Left BSpace Right h e l l o ' ' '"'
+expect '"hello | + ": one quote, closing it' '"hello "|' "$(line)"
+editor; key '"' a '"' ' ' b Left '"'
+expect '  ... an even number on the row: a pair' '"a" "|"b' "$(line)"
+editor; key a ' ' '\' '"'; lefts 4; key '"'
+expect '  ... an escaped one does not count' '"|"a \"' "$(line)"
+editor; key i t "'" s Left Left Left Left "'"
+expect "  ... nor an apostrophe" "'|'it's" "$(line)"
+editor; key h e l l o ')'; lefts 6; key '('
+expect '|hello) + (: one opener' '(|hello)' "$(line)"
+editor; key a ' ' '(' b ')'; lefts 5; key '('
+expect '  ... a closer that has its opener after the cursor: a pair' '(|)a (b)' "$(line)"
+editor; key h e l l o ']'; lefts 6; key '('
+expect '  ... a closer of another pair: a pair' '(|)hello]' "$(line)"
 
 echo "closers"
 editor; key '(' ')'
