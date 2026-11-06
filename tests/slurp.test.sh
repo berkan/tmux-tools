@@ -125,6 +125,19 @@ expect "  ... and again" '(foo bar |baz)' "$(line)"
 press 'C-('
 expect "  ... not into the prompt before the input" '(foo bar |baz)' "$(line)"
 
+at 'hello""|'; press 'C-('
+expect "right after an empty pair (a quote after a word, hello\"\"|): that pair" '"hello"|' "$(line)"
+at 'say hello``|'; press 'C-('
+expect "  ... backticks" 'say `hello`|' "$(line)"
+at 'a ()|'; press 'C-('
+expect "  ... brackets, the space kept as any slurp keeps it" '(a )|' "$(line)"
+at '(x hello""|)'; press 'C-('
+expect "  ... within another pair: that one, not past its opener" '(x "hello"|)' "$(line)"
+press 'C-('
+expect "  ... and again, inside now" '("x hello"|)' "$(line)"
+at 'hello""| x'; press 'C-)'
+expect "  ... only backward: C-) there does nothing" 'hello""| x' "$(line)"
+
 echo "barf forward: M-)"
 at '(foo bar| baz)'; press 'M-)'
 expect "the closer moves before the last word" '(foo bar|) baz' "$(line)"

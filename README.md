@@ -263,7 +263,7 @@ moves):
 | key | does |
 |---|---|
 | `C-)` | slurp forward: the closer moves past the next word, `(foo\|) bar` to `(foo\| bar)` |
-| `C-(` | slurp backward: the opener moves before the word before, `foo (\|bar)` to `(foo \|bar)` |
+| `C-(` | slurp backward: the opener moves before the word before, `foo (\|bar)` to `(foo \|bar)`; right after a pair, that pair: `hello""\|` to `"hello"\|`, and again for the word before that |
 | `M-)` | barf forward: the closer moves before the last word, `(foo bar\|)` to `(foo) bar\|` |
 | `M-(` | barf backward: the opener moves after the first word, `(foo bar\|)` to `foo (bar\|)` |
 

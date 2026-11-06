@@ -9,7 +9,8 @@
 #   M-(   barf backward: the opener moves after the first word   (fo|o bar)  →  fo|o (bar)
 # The pair is the innermost around the cursor on its row, the cursor on its
 # opener counting as in it (a block cursor shows it there; the cursor stays on
-# the opener as it moves). A word is a run of
+# the opener as it moves); for C-(, the pair the cursor is right after first
+# (hello""| → "hello"|, an empty pair even after a word). A word is a run of
 # non-blanks, a pair within it taken whole, ending at the end of the pair
 # around (a slurp stays inside it). A barf leaves one word in the pair at
 # least. When there is no such word, nothing happens.
@@ -159,9 +160,17 @@ def plan(row, i, how, way, table):
     back at T of what is left, the cursor at F after; None for none."""
     pairs = spans(row, table)
     around = [(o, c) for o, c in pairs.items() if o <= i <= c]    # on the opener too (a block cursor)
-    if not around:
+    behind = None
+    if (how, way) == ('slurp', 'backward') and i >= 2:      # right after a closer: that pair
+        behind = next(((a, b) for a, b in pairs.items() if b == i - 1), None)
+        if not behind and table.get(row[i - 2]) == row[i - 1] and row[i - 3:i - 2] != '\\':
+            behind = (i - 2, i - 1)                 # an empty one, though a quote after a word opens none (hello"")
+    if behind:
+        o, c = behind
+    elif around:
+        o, c = max(around)
+    else:
         return None
-    o, c = max(around)
     outer = [(a, b) for a, b in around if a < o]
     lo, hi = (max(outer)[0] + 1, max(outer)[1]) if outer else (0, len(row))
     if (how, way) == ('slurp', 'forward'):
