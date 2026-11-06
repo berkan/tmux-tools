@@ -255,7 +255,9 @@ it (`don't` typed fast).
 ### slurp
 
 In the programs below, without the prefix, with the cursor inside a pair of
-brackets or quotes (the innermost around it on its row):
+brackets or quotes (the innermost around it on its row), or on its opener, as
+a block cursor shows `|"hello" world` (the cursor stays on the opener as it
+moves):
 
 | key | does |
 |---|---|

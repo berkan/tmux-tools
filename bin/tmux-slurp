@@ -7,7 +7,9 @@
 #   C-(   slurp backward: the opener moves before the one before   foo (|bar)  →  (foo |bar)
 #   M-)   barf forward: the closer moves before the last word   (foo ba|r)  →  (foo) ba|r
 #   M-(   barf backward: the opener moves after the first word   (fo|o bar)  →  fo|o (bar)
-# The pair is the innermost around the cursor on its row. A word is a run of
+# The pair is the innermost around the cursor on its row, the cursor on its
+# opener counting as in it (a block cursor shows it there; the cursor stays on
+# the opener as it moves). A word is a run of
 # non-blanks, a pair within it taken whole, ending at the end of the pair
 # around (a slurp stays inside it). A barf leaves one word in the pair at
 # least. When there is no such word, nothing happens.
@@ -156,7 +158,7 @@ def plan(row, i, how, way, table):
     the cursor before character I: (d, t, f) — take out character D, put it
     back at T of what is left, the cursor at F after; None for none."""
     pairs = spans(row, table)
-    around = [(o, c) for o, c in pairs.items() if o < i <= c]
+    around = [(o, c) for o, c in pairs.items() if o <= i <= c]    # on the opener too (a block cursor)
     if not around:
         return None
     o, c = max(around)
@@ -167,7 +169,7 @@ def plan(row, i, how, way, table):
         return None if e is None else (c, e - 1, i)
     if (how, way) == ('slurp', 'backward'):
         s = word_before(row, o, lo, pairs)
-        return None if s is None else (o, s, i)
+        return None if s is None else (o, s, s if i == o else i)
     if way == 'forward':
         s = word_before(row, c, o + 1, pairs)
         if s is None:
@@ -182,7 +184,7 @@ def plan(row, i, how, way, table):
     n = e
     while n < c and row[n].isspace():
         n += 1
-    return None if n >= c else (o, n - 1, i if i >= n else i - 1)
+    return None if n >= c else (o, n - 1, n - 1 if i == o else i if i >= n else i - 1)
 
 
 def screen(pane, cy):

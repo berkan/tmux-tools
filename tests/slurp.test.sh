@@ -139,6 +139,18 @@ expect "the opener moves after the first word" 'foo (bar| baz)' "$(line)"
 at '(f|oo bar)'; press 'M-('
 expect "the cursor in that word stays in it" 'f|oo (bar)' "$(line)"
 
+echo "the cursor on the opener (a block cursor shows it there): that pair"
+at '|"hello" world'; press 'C-)'
+expect "slurp forward" '|"hello world"' "$(line)"
+at 'foo |"bar"'; press 'C-('
+expect "slurp backward: the cursor stays on the opener" '|"foo bar"' "$(line)"
+at '|(foo bar)'; press 'M-)'
+expect "barf forward" '|(foo) bar' "$(line)"
+at '|(foo bar)'; press 'M-('
+expect "barf backward: the cursor stays on the opener" 'foo |(bar)' "$(line)"
+at '(a |"b" c) d'; press 'C-)'
+expect "  ... within another pair: the one at the cursor" '(a |"b c") d' "$(line)"
+
 echo "nothing around the cursor"
 at 'foo| bar'; press 'C-)'
 expect "outside any pair: nothing" 'foo| bar' "$(line)"
