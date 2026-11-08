@@ -126,6 +126,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
 | `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |
 | `@dabbrev-pipe-completion` | right after a completion (`_h` + Tab, then `\|(` + Tab), the pipe's LEFT is that completion, whole: `(hello world)` [on]; `off`: as anywhere else (below) |
+| `@dabbrev-sentence-stop` | `.The` takes the sentence with its `.` `!` `?` or `:` [off] |
 | `@dabbrev-sentence-line-start` | where the input starts ends a sentence too, so that `One here \|.(` gives `(One here)` [on]; `off`: a `\|.` with no stop to go back past takes nothing |
 | `@dabbrev-slash-open` | `on`: a completion that ends in `/` (a coloured `docs/`) ends there, without the space and not closed, as a folder does; typing on narrows it, and Tab completes what starts with it (`docs/design.md`) [off] |
 | `@dabbrev-hints` | after each press, what `M-/` cycles to, in the status line: `M-/ 1/3: [docs/] · docs/design.md · docs/evidence/` [on: for 3 seconds]; a number: so many milliseconds; `off` |
@@ -399,7 +400,7 @@ touches it (or is one space after it, for the marks in
 | `^The oth` | the words at a line's start (`^#`, `^*` for headings and org items) |
 | `_The oth` | the whole row that starts so |
 | `-Which` | the whole list item that starts so |
-| `.The` | the whole sentence that starts so (to `.` `!` `?` or `:`) |
+| `.The` | the whole sentence that starts so (to `.` `!` `?` or `:`, without it: `@dabbrev-sentence-stop`) |
 | `=Does` | an entity that starts so (`=` gives the longer first) |
 | `2.` | the list item numbered 2 |
 | `keep them ..cons` | from where `keep them` is on screen up to and with `consumes` |

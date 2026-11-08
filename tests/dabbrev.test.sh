@@ -245,7 +245,7 @@ typed 'wow! Tha'; dab expand
 expect "  ... \"! \" too" 'wow! Thatcher ' "$(line)"
 editor 'Some words. The other direction is' '  long here. More'
 typed '.th'; dab tab
-expect ".word: the sentence that starts so, over a line break" 'The other direction is long here. ' "$(line)"
+expect ".word: the sentence that starts so, over a line break, without its stop" 'The other direction is long here ' "$(line)"
 editor 'The model in four sentences' '' 'more'
 typed '.th'; dab tab
 expect "  ... with no end, to the block's" 'The model in four sentences ' "$(line)"
@@ -254,7 +254,7 @@ typed '.th'; dab tab
 expect "  ... or to the next list item" 'The first item ' "$(line)"
 editor 'it goes: on and on. done'
 typed '.on'; dab tab
-expect "  ... a sentence starts after :" 'on and on. ' "$(line)"
+expect "  ... a sentence starts after :" 'on and on ' "$(line)"
 editor 'we go: then more. end'
 typed 'we ...'; dab tab
 expect "... (.. and .) ends at : too" 'we go: ' "$(line)"
@@ -281,7 +281,7 @@ expect "  ... no such item: as before" '2.5 ' "$(line)"
 
 LIST=('Thanks first.' 'Howdy partner' 'say Whale here' '- Which one' 'gcc -Wall now')
 tmux set -g @dabbrev-spaced-marks '^'
-for t in '^H|Howdy ' '^ H|Howdy ' '-W|Which one ' '.t|Thanks first. '; do
+for t in '^H|Howdy ' '^ H|Howdy ' '-W|Which one ' '.t|Thanks first '; do
     editor "${LIST[@]}"
     typed "${t%%|*}"; dab tab
     expect "Tab on one letter after an anchor: ${t%%|*}" "0 ${t#*|}" "$(tabs) $(line)"
@@ -297,7 +297,7 @@ typed '-Wal'; dab tab
 expect "  ... -W with no such list item: as before, the - kept" '-Wall ' "$(line)"
 editor 'Thanks first.' 'say Thatcher here' 'done. Thawing now.' 'see .thatrc'
 typed '.th'
-expect ".word: the sentences that start so, whole, the . gone" 'Thanks first. |Thawing now. |.th|' "$(cycle 1 2 3)"
+expect ".word: the sentences that start so, whole, the . gone" 'Thanks first |Thawing now |.th|' "$(cycle 1 2 3)"
 editor 'say Thatcher here' 'see .thatrc'
 typed 'x .thatr'; dab tab
 expect "  ... with none such: as before, the . kept" 'x .thatrc ' "$(line)"

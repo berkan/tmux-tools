@@ -52,8 +52,9 @@
 #
 #   operators     (on the screen's words) ^ _ - . = N. and .. ends, as in
 #                 "What is typed" below: ^The oth a line's start, _# Ti the
-#                 row that starts so, -Wh the list item, .The the sentence,
-#                 =Does the entity, 2. the item numbered 2, ^T..$$ from a
+#                 row that starts so, -Wh the list item, .The the sentence
+#                 (its stop with @dabbrev-sentence-stop on), =Does the
+#                 entity, 2. the item numbered 2, ^T..$$ from a
 #                 line starting T to the block's end, keep them in ..cons
 #                 from where "keep them in" is on screen to consumes. M-/
 #                 goes on to the next match; Tab after one, word by word.
@@ -138,6 +139,7 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 RUBY_OPTION = '@dabbrev-ruby-ranges'
 PIPE_COMPLETION_OPTION = '@dabbrev-pipe-completion'
 SENTENCE_LINE_START_OPTION = '@dabbrev-sentence-line-start'
+SENTENCE_STOP_OPTION = '@dabbrev-sentence-stop'                 # .ARG with its . ! ? or : (on; off the default)
 SLASH_OPTION = '@dabbrev-slash-open'
 HINTS_OPTION, HINTS_ON, HINT_WIDTH = '@dabbrev-hints', 3000, 40      # on (the default): shown so many ms
 BLOCK_END = re.compile(r'\n[ \t]*\n')                                    # a blank row
@@ -850,6 +852,8 @@ def anchored(pane, start, unit):
             m = PART_END.search(following)
             stop, block = ends(following, '.'), m.start() if m else len(following.rstrip())
             end = stop[0] if stop and stop[0] <= block else block
+            if stop and stop[0] <= block and not pane.sentence_stop():
+                end = ends(following, '.', True)[0]     # its stop left out
             text, rest = taken(following, end), following[end:]
         else:
             text, rest = pane.screen[row][a:b], after(pane.screen, pane.cy, row, b, 0)
@@ -1753,6 +1757,11 @@ class Pane:
         if self._marks is None:
             self._marks = Marks(set(KINDS) | set(self.sugars()), tmux('show-options', '-gqv', SPACED_OPTION).strip())
         return self._marks
+
+    def sentence_stop(self):
+        """Whether .ARG takes the sentence with its stop (@dabbrev-sentence-stop,
+        off unless on)."""
+        return tmux('show-options', '-gqv', SENTENCE_STOP_OPTION).strip() == 'on'
 
     def ruby_ranges(self):
         """Whether ... leaves the end out (@dabbrev-ruby-ranges, on unless off)."""

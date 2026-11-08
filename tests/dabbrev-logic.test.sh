@@ -88,7 +88,12 @@ expect('^* org: a line start, the last word completed', ['* org '], MD, '^* org'
 expect('^The oth: the words, the last completed', ['The other '], MD, '^The oth')
 expect('_The oth: the row', ['The other direction: a '], MD, '_The oth')
 expect('-Which one: the whole item', ['Which one is wrapped on '], MD, '-Which one')
-expect('.The oth: the whole sentence (: ends one)', ['The other direction: '], MD, '.The oth')
+expect('.The oth: the whole sentence (: ends one), without its stop', ['The other direction '], MD, '.The oth')
+expect('  ... ? too', ['Does it work '], ['Here. Does it work? Yes.'], '.Does')
+OPTIONS['@dabbrev-sentence-stop'] = 'on'
+expect('  ... @dabbrev-sentence-stop on: with it', ['Does it work? '], ['Here. Does it work? Yes.'], '.Does')
+expect('  ... and :', ['The other direction: '], MD, '.The oth')
+del OPTIONS['@dabbrev-sentence-stop']
 expect('=Does Wh: the entity that starts so', ['Does When '], MD, '=Does Wh')
 expect('^Wh: a line start past a list mark too', ['Which ', 'Whatever '], MD, '^Wh')
 
