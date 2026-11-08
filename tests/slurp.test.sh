@@ -116,6 +116,12 @@ at '"don'"'"'t| stop" now'; press 'C-)'
 expect "an apostrophe is no quote" '"don'"'"'t| stop now"' "$(line)"
 at '(日本|) 語 x'; press 'C-)'
 expect "wide characters" '(日本| 語) x' "$(line)"
+at '(foo|) bar, baz'; press 'C-)'
+expect "punctuation after the word: a step of its own" '(foo| bar), baz' "$(line)"
+press 'C-)'
+expect "  ... then the punctuation" '(foo| bar,) baz' "$(line)"
+at '(foo|) "bar"... baz'; press 'C-)'
+expect "  ... after a pair in the word too" '(foo| "bar")... baz' "$(line)"
 
 echo "slurp backward: C-("
 at 'foo bar (|baz)'; press 'C-('
@@ -145,12 +151,22 @@ at '(foo ba|r)'; press 'M-)'
 expect "the cursor in that word stays in it" '(foo) ba|r' "$(line)"
 at '(foo|)'; press 'M-)'
 expect "one word: nothing" '(foo|)' "$(line)"
+at '(foo bar|,)'; press 'M-)'
+expect "punctuation after the last word: a step of its own" '(foo bar|),' "$(line)"
+press 'M-)'
+expect "  ... then the word" '(foo) bar|,' "$(line)"
+at '(foo|!)'; press 'M-)'
+expect "  ... one word and its punctuation: the punctuation" '(foo|)!' "$(line)"
 
 echo "barf backward: M-("
 at '(foo bar| baz)'; press 'M-('
 expect "the opener moves after the first word" 'foo (bar| baz)' "$(line)"
 at '(f|oo bar)'; press 'M-('
 expect "the cursor in that word stays in it" 'f|oo (bar)' "$(line)"
+at '(foo, bar| baz)'; press 'M-('
+expect "the word's punctuation goes with it (backward)" 'foo, (bar| baz)' "$(line)"
+at 'foo, (|bar)'; press 'C-('
+expect "  ... slurp backward too" '(foo, |bar)' "$(line)"
 
 echo "the cursor on the opener (a block cursor shows it there): that pair"
 at '|"hello" world'; press 'C-)'

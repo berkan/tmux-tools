@@ -269,8 +269,11 @@ moves):
 
 A word is a run of non-blanks, with a pair in it taken whole (`[a b]`); a
 slurp stops at the end of the pair around (`(a "b\|" c)` slurps `c` and no
-further), a barf leaves one word in. The cursor stays on the character it
-was on.
+further), a barf leaves one word in. Punctuation at a word's end
+(`. , ; : ! ? …`) is a step of its own forward: `(foo\|) bar, baz` slurps to
+`(foo\| bar), baz`, then `(foo\| bar,) baz`; `(foo bar,)` barfs to
+`(foo bar),`, then `(foo) bar,`. Backward it goes with its word. The cursor
+stays on the character it was on.
 
 | option | |
 |---|---|
