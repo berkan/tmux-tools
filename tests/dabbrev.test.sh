@@ -79,7 +79,8 @@ CWD="$SCRATCH"
 editor() {
     : > "$SCRATCH/tabs.log"; : > "$SCRATCH/tabs.log.text"
     ROW=$#
-    tmux respawn-pane -k -t "$PANE" -c "$CWD" "python3 $SCRATCH/editor.py $SCRATCH/tabs.log $(printf '%q ' "$@")"
+    # as arguments, run without a shell: /bin/sh may be dash, which has no $'..'
+    tmux respawn-pane -k -t "$PANE" -c "$CWD" python3 "$SCRATCH/editor.py" "$SCRATCH/tabs.log" "$@"
     sleep 0.4
 }
 typed() { tmux send-keys -t "$PANE" -l -- "$1"; sleep 0.2; }

@@ -83,13 +83,14 @@ PANE=$(inner display -p '#{pane_id}')
 CLIENT=$(inner list-clients -F '#{client_name}')
 SOCKET=$(inner display -p '#{socket_path}')
 
-# run_pane CMD — restart the pane with CMD and wait until it has drawn.
+# run_pane CMD, or PROGRAM ARG... — restart the pane with it and wait until it has drawn.
 run_pane() {
     : > "$SCRATCH/rec.log"
-    inner respawn-pane -k -t "$PANE" "$1"
+    inner respawn-pane -k -t "$PANE" "$@"
     sleep 0.4
 }
-recorder() { run_pane "python3 $SCRATCH/recorder.py $SCRATCH/rec.log $(printf '%q ' "$@")"; }
+# as arguments, run without a shell: /bin/sh may be dash, which has no $'..'
+recorder() { run_pane python3 "$SCRATCH/recorder.py" "$SCRATCH/rec.log" "$@"; }
 recorded() { cat "$SCRATCH/rec.log"; }
 
 # pick KEY... — run tmux-jump-click on the pane and type KEYs into its popup.

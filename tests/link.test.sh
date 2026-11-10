@@ -61,7 +61,8 @@ PANE=$(tmux display -p '#{pane_id}')
 # prog LINE... — restart the pane with the program under LINEs.
 prog() {
     : > "$SCRATCH/typed"
-    tmux respawn-pane -k -t "$PANE" "python3 $SCRATCH/prog.py $SCRATCH/typed $(printf '%q ' "$@")"
+    # as arguments, run without a shell: /bin/sh may be dash, which has no $'..'
+    tmux respawn-pane -k -t "$PANE" python3 "$SCRATCH/prog.py" "$SCRATCH/typed" "$@"
     sleep 0.4
 }
 # at ROW COL — the copy cursor to ROW (from the top of the screen) and COL.
