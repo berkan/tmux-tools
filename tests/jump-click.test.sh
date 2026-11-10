@@ -308,6 +308,19 @@ inner set -gu @jump-click-key
 TMUX="$SOCKET,0,0" python3 "$CLICK" bind
 expect "the default key is C-j, and the old keys are unbound" "1 0 0" \
     "$(inner list-keys -T prefix | grep -cE "prefix +C-j +run-shell .*tmux-jump-click") $(inner list-keys -T prefix | grep -cE "prefix +j ") $(inner list-keys -T prefix | grep -cE "prefix +C-b ")"
+# A key given up and bound to something else since (tmux.conf, sourced again)
+# keeps that binding.
+inner set -g @jump-click-key 'j C-j'
+inner set -g @jump-click-mark-keys 'C-a'
+TMUX="$SOCKET,0,0" python3 "$CLICK" bind
+inner set -g @jump-click-key C-j
+inner set -gu @jump-click-mark-keys
+inner bind j last-window
+inner bind -n C-a send-keys X
+TMUX="$SOCKET,0,0" python3 "$CLICK" bind
+expect "an old key bound to something else since keeps it" "1 1" \
+    "$(inner list-keys -T prefix | grep -cE "prefix +j +last-window$") $(inner list-keys -T root | grep -cE "root +C-a +send-keys X$")"
+inner unbind j; inner unbind -n C-a
 
 echo "other programs get arrow keys within the cursor's line"
 # bash: type a line, move along it with tmux-jump-click, then insert X and run it.

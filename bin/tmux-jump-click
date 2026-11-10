@@ -489,6 +489,15 @@ def mark(pane, key):
         tmux('set-option', '-p', '-t', pane, FROM_IN, place)
 
 
+def unbind_ours(table, key):
+    """Unbind KEY in TABLE if it still runs this script: a key given up may
+    have been bound to something else since (tmux.conf sourced again)."""
+    out = subprocess.run(['tmux', 'list-keys', '-T', table, key],
+                         capture_output=True, text=True).stdout
+    if os.path.basename(__file__) in out:
+        subprocess.run(['tmux', 'unbind-key', '-T', table, key], stderr=subprocess.DEVNULL)
+
+
 def bind():
     """Bind the keys in the @jump-click-key option (default C-j; several are
     separated by spaces) after the prefix, and unbind those bound before that
@@ -500,7 +509,7 @@ def bind():
              f"{os.path.abspath(__file__)} '#{{pane_id}}' '#{{client_name}}'")
     for key in old:
         if key not in keys:
-            subprocess.run(['tmux', 'unbind-key', key], stderr=subprocess.DEVNULL)
+            unbind_ours('prefix', key)
     tmux('set-option', '-g', '@jump-click-bound-key', ' '.join(keys))
     script = os.path.abspath(__file__)
     root = tmux('show-options', '-gqv', '@jump-click-back-key').split()[:1]
@@ -511,7 +520,7 @@ def bind():
         tmux('bind-key', '-n', key, 'run-shell', f"{script} mark '#{{pane_id}}' {shlex.quote(key)}")
     for key in tmux('show-options', '-gqv', '@jump-click-bound-root').split():
         if key not in root + marks:
-            subprocess.run(['tmux', 'unbind-key', '-n', key], stderr=subprocess.DEVNULL)
+            unbind_ours('root', key)
     tmux('set-option', '-g', '@jump-click-bound-root', ' '.join(root + marks))
 
 
