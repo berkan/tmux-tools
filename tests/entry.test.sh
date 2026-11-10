@@ -53,5 +53,20 @@ bash "$ENTRY"
 expect "electric-pair binds last, so its Tab wraps dabbrev's whatever the order" 1 \
     "$(tmux list-keys -T root Tab | grep -F 'electric-pair-tab' | grep -cF 'tmux-dabbrev tab')"
 
+# What is missing is told on the next attach or new session (none may be
+# attached while the config runs), and nothing is bound.
+mkdir -p "$SCRATCH/old"
+printf '#!/bin/sh\nexit 1\n' > "$SCRATCH/old/python3"; chmod +x "$SCRATCH/old/python3"
+fresh
+PATH="$SCRATCH/old:$PATH" bash "$ENTRY" || true
+expect "an old python3: nothing is bound" '' "$(bound)"
+expect "  ... and the next attach is told so" 1 \
+    "$(tmux show-hooks -g client-attached | grep -F 'display-message' | grep -cF 'python3')"
+expect "  ... as is a new session" 1 \
+    "$(tmux show-hooks -g client-session-changed | grep -F 'display-message' | grep -cF 'python3')"
+fresh
+bash "$ENTRY"
+expect "with what is needed, no such hook" 0 "$(tmux show-hooks -g | grep -cF 'tmux-tools:' || true)"
+
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
