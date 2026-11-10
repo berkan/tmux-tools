@@ -15,8 +15,11 @@ every change to keys, options, files or the dabbrev language.
   - `bash tests/link.test.sh`, `bash tests/jump-click.test.sh`,
     `bash tests/expand-region.test.sh`, `bash tests/electric-pair.test.sh`,
     `bash tests/slurp.test.sh`, `bash tests/scroll.test.sh`,
-    `bash tests/entry.test.sh`
+    `bash tests/entry.test.sh`, `bash tests/install.test.sh`
   `link` also has to pass on tmux 3.4 (copy mode keeps no links there).
+  On Linux too (/bin/sh is dash there: give a pane its program as
+  arguments, not a string with bash's `printf %q`); tmux 3.3 is the oldest
+  supported (`lib/requirements.sh`), where `link` reads no links at all.
 - **No dependency on any particular setup**: defaults under
   `~/.config/<tool>/`, options named after the tool (`@dabbrev-…`,
   `@link-…`), buffers named after the tool.

@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# install — set tmux-tools up without tpm: check tmux and python3, add one
+# line to the tmux config tmux reads, and bind the tools in the tmux server
+# that is running, if one is. Safe to run again.
+#
+#   ./install               do it
+#   ./install --check       only check tmux and python3
+#   ./install --conf FILE   use FILE as the tmux config
+#   ./install --remove      take the line out again (the keys go when tmux restarts)
+
+set -euo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENTRY="$DIR/tmux-tools.tmux"
+. "$DIR/lib/requirements.sh"
+
+conf='' mode=install
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --check) mode=check ;;
+        --remove) mode=remove ;;
+        --conf) conf="${2:?--conf needs a file}"; shift ;;
+        -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 0 ;;
+        *) echo "install: unknown argument: $1 (see --help)" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+# The tmux config to change: the one given, else the last of those tmux
+# reads that exists (it reads them all, in this order, so options set in
+# the others apply), else ~/.tmux.conf.
+find_conf() {
+    local xdg="${XDG_CONFIG_HOME:-$HOME/.config}/tmux/tmux.conf" last=''
+    for f in "$HOME/.tmux.conf" "$xdg" "$HOME/.config/tmux/tmux.conf"; do
+        [ -e "$f" ] && last="$f"
+    done
+    echo "${last:-$HOME/.tmux.conf}"
+}
+[ -n "$conf" ] || conf="$(find_conf)"
+
+# The line as written: the path with ~ for the home folder.
+shown="$ENTRY"
+case "$ENTRY" in "$HOME"/*) shown="~${ENTRY#"$HOME"}" ;; esac
+MARK='# tmux-tools (added by tmux-tools/install; ./install --remove takes it out)'
+LINE="run-shell '$shown'"
+
+if [ "$mode" = remove ]; then
+    if [ -e "$conf" ] && grep -qxF "$LINE" "$conf"; then
+        tmp="$(mktemp)"
+        grep -vxF -e "$MARK" -e "$LINE" "$conf" > "$tmp" || true
+        cat "$tmp" > "$conf"; rm -f "$tmp"
+        echo "Taken out of $conf. The keys stay bound until tmux restarts (tmux kill-server)."
+    else
+        echo "Nothing to take out: $conf has no line added by install."
+    fi
+    exit 0
+fi
+
+if ! problems="$(tmux_tools_problems)"; then
+    echo "tmux-tools cannot run here:" >&2
+    printf '  %s\n' "$problems" | sed 's/^  $//' >&2
+    exit 1
+fi
+[ -n "$problems" ] && printf 'Note: %s\n' "$problems"
+[ "$mode" = check ] && { echo "tmux and python3 are fine for tmux-tools."; exit 0; }
+
+case "$ENTRY" in
+    *[!A-Za-z0-9_./~+@:-]*)
+        echo "install: the path $ENTRY has spaces or quotes; clone tmux-tools somewhere without them" >&2
+        exit 1 ;;
+esac
+
+if [ -e "$conf" ] && grep -qE 'tmux-tools(\.tmux|'"'"'|")|berkan/tmux-tools' "$conf"; then
+    echo "Already in $conf:"
+    grep -nE 'tmux-tools(\.tmux|'"'"'|")|berkan/tmux-tools' "$conf" | sed 's/^/  line /'
+else
+    mkdir -p "$(dirname "$conf")"
+    [ -s "$conf" ] && [ -n "$(tail -c 1 "$conf")" ] && echo >> "$conf"
+    printf '%s\n%s\n' "$MARK" "$LINE" >> "$conf"
+    echo "Added to $conf:"
+    echo "  $LINE"
+    echo "  (options for the tools go above it: README.md, Keys and options)"
+fi
+
+# Bind them now in the running server, without sourcing the whole config
+# again (not every config is safe to run twice).
+if tmux list-sessions >/dev/null 2>&1; then
+    tmux run-shell "$ENTRY"
+    n="$(tmux list-keys | grep -cF "$DIR/bin/tmux-" || true)"
+    echo "Bound in the running tmux: $n keys."
+else
+    echo "No tmux is running; the tools are bound when it starts."
+fi
+cat <<'EOF'
+
+To try it, in a tmux pane:
+  - type the start of a word that is on the screen, then Alt+/ (M-/): it completes
+  - prefix then C-j, then a character: labels to jump to
+  - prefix [ for copy mode, then = to grow the selection, - to shrink it
+If Alt+/ types a character instead, the terminal needs Alt to send Esc
+(README.md, Requirements).
+EOF

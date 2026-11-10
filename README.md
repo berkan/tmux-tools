@@ -19,8 +19,13 @@ named.
 
 ## Requirements
 
-- tmux 3.4 or newer (3.5 for `link` to read links without leaving copy mode)
-- python3 (`quote-reply` is plain sh)
+- tmux 3.3 or newer; 3.4 for `link` to act on links (OSC 8), 3.5 for it to
+  read them without leaving copy mode. Debian 12 has 3.3, Ubuntu 24.04 3.4;
+  Ubuntu 22.04's 3.2 is too old. `tmux -V` says which you have.
+- python3, 3.9 or newer (`quote-reply` and `scroll` are plain sh)
+- for the keys with Alt (`M-/`, `M-[`, …): a terminal that sends Alt as Esc,
+  as most on Linux do; on macOS, Option does so only when set to (in
+  Ghostty `macos-option-as-alt`, or the keybinds below)
 - for `dabbrev`'s `M-/`, `M-?` and `M-$`: a terminal that sends them. In Ghostty, to
   have Cmd+/ and Cmd+Shift+/ do it:
 
@@ -58,27 +63,73 @@ named.
 
 ## Install
 
-With [tpm](https://github.com/tmux-plugins/tpm), in `~/.tmux.conf`:
+`./install --check` (after cloning, below) says whether your tmux and
+python3 will do. When they will not, tmux-tools binds nothing and says why
+when tmux starts.
 
-```tmux
-set -g @plugin 'berkan/tmux-tools'
+### With install
+
+```sh
+git clone https://github.com/berkan/tmux-tools ~/.tmux/plugins/tmux-tools
+~/.tmux/plugins/tmux-tools/install
 ```
 
-then `prefix I`. tpm runs `tmux-tools.tmux`, which binds every tool.
+It adds one line to the tmux config tmux reads (`~/.tmux.conf`, or
+`~/.config/tmux/tmux.conf` when that is the one you have; `--conf FILE` for
+another), and binds the tools in the tmux that is running, without sourcing
+your config again. It then says what to try first. Run again, it changes
+nothing; `./install --remove` takes the line out. To update: `git pull` in
+the clone.
 
-By hand: clone the repository anywhere and add to `~/.tmux.conf`
+### With tpm
+
+If you do not have [tpm](https://github.com/tmux-plugins/tpm) yet:
+
+```sh
+git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+```
+
+In `~/.tmux.conf` (made if you have none), the `run` line last:
+
+```tmux
+set -g @plugin 'tmux-plugins/tpm'
+set -g @plugin 'berkan/tmux-tools'
+# ... options for the tools here (Keys and options, below) ...
+run '~/.tmux/plugins/tpm/tpm'
+```
+
+Then load it into the tmux that is running — `tmux source-file
+~/.tmux.conf`, or start tmux afresh — and press `prefix I` (`C-b` then
+Shift+I with tmux's own prefix) to fetch the plugins. `prefix U` updates.
+
+### By hand
+
+Clone the repository anywhere and add to the tmux config
 
 ```tmux
 run-shell ~/path/to/tmux-tools/tmux-tools.tmux
 ```
 
-One tool alone: each binds its own keys, so
+then `tmux source-file ~/.tmux.conf` (or start tmux afresh). One tool alone:
+each binds its own keys, so
 
 ```tmux
 run-shell '~/path/to/tmux-tools/bin/tmux-dabbrev bind'
 ```
 
 Set a tool's options (below) before the line that binds it.
+
+### Try it
+
+In a tmux pane, type the start of a word that is on the screen and press
+`M-/` (Alt+/): it completes. `prefix C-j` then a character puts labels to
+jump to. In copy mode (`prefix [`), `=` grows the selection. Tab, brackets and
+quotes do more only in the agents named in `@dabbrev-tab-commands` and
+`@electric-pair-commands`; in a shell they are as ever.
+
+If nothing happens: `tmux list-keys | grep tmux-tools` should list the keys.
+If it lists none, the config line was not read (source the config again) or
+tmux-tools refused (it says why when tmux starts; `./install --check`).
 
 ### Choosing tools
 
@@ -473,6 +524,7 @@ bash tests/electric-pair.test.sh
 bash tests/slurp.test.sh
 bash tests/scroll.test.sh
 bash tests/entry.test.sh           # tmux-tools.tmux
+bash tests/install.test.sh         # ./install
 ```
 
 Each runs its own scratch tmux server and touches nothing of yours.
