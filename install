@@ -98,5 +98,5 @@ To try it, in a tmux pane:
   - prefix then C-j, then a character: labels to jump to
   - prefix [ for copy mode, then = to grow the selection, - to shrink it
 If Alt+/ types a character instead, the terminal needs Alt to send Esc
-(README.md, Requirements).
+(README.md, Terminal keys).
 EOF

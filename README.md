@@ -23,43 +23,8 @@ named.
   read them without leaving copy mode. Debian 12 has 3.3, Ubuntu 24.04 3.4;
   Ubuntu 22.04's 3.2 is too old. `tmux -V` says which you have.
 - python3, 3.9 or newer (`quote-reply` and `scroll` are plain sh)
-- for the keys with Alt (`M-/`, `M-[`, …): a terminal that sends Alt as Esc,
-  as most on Linux do; on macOS, Option does so only when set to (in
-  Ghostty `macos-option-as-alt`, or the keybinds below)
-- for `dabbrev`'s `M-/`, `M-?` and `M-$`: a terminal that sends them. In Ghostty, to
-  have Cmd+/ and Cmd+Shift+/ do it:
 
-  ```
-  keybind = cmd+/=text:\x1b/
-  keybind = cmd+shift+/=text:\x1b?
-  ```
-- for `slurp`'s `C-(` and `C-)`: a terminal that sends them (as CSI u:
-  Ghostty, kitty, WezTerm). In Ghostty, to slurp with Cmd+( and Cmd+) and
-  barf with Option+( and Option+):
-
-  ```
-  keybind = cmd+shift+9=text:\x1b[40;5u
-  keybind = cmd+shift+0=text:\x1b[41;5u
-  keybind = alt+shift+9=text:\x1b(
-  keybind = alt+shift+0=text:\x1b)
-  ```
-
-  Option+$ types `›` on macOS unless Option is Alt (`macos-option-as-alt`,
-  which takes Option's other characters away too); to have it send `M-$`
-  alone:
-
-  ```
-  keybind = opt+shift+4=text:\x1b$
-  ```
-
-- for `scroll`'s `M-[` and `M-]`: a terminal that sends them. On macOS,
-  Option+[ types `“` unless Option is Alt; in Ghostty, to scroll with
-  Cmd+[ and Cmd+] (which take Ghostty's own split switching):
-
-  ```
-  keybind = super+bracket_left=text:\x1b[
-  keybind = super+bracket_right=text:\x1b]
-  ```
+Some keys need the terminal to send them: [Terminal keys](#terminal-keys).
 
 ## Install
 
@@ -126,6 +91,7 @@ In a tmux pane, type the start of a word that is on the screen and press
 jump to. In copy mode (`prefix [`), `=` grows the selection. Tab, brackets and
 quotes do more only in the agents named in `@dabbrev-tab-commands` and
 `@electric-pair-commands`; in a shell they are as ever.
+If `M-/` types a character instead, see [Terminal keys](#terminal-keys).
 
 If nothing happens: `tmux list-keys | grep tmux-tools` should list the keys.
 If it lists none, the config line was not read (source the config again) or
@@ -511,6 +477,48 @@ To see how something is read and what each part would take:
 ```
 tmux-dabbrev explain '1., -Wh' [PANE]
 ```
+
+## Terminal keys
+
+The keys reach tmux only as the terminal sends them.
+
+- for the keys with Alt (`M-/`, `M-[`, …): a terminal that sends Alt as Esc,
+  as most on Linux do; on macOS, Option does so only when set to (in
+  Ghostty `macos-option-as-alt`, or the keybinds that follow)
+- for `dabbrev`'s `M-/`, `M-?` and `M-$`: a terminal that sends them. In Ghostty, to
+  have Cmd+/ and Cmd+Shift+/ do it:
+
+  ```
+  keybind = cmd+/=text:\x1b/
+  keybind = cmd+shift+/=text:\x1b?
+  ```
+- for `slurp`'s `C-(` and `C-)`: a terminal that sends them (as CSI u:
+  Ghostty, kitty, WezTerm). In Ghostty, to slurp with Cmd+( and Cmd+) and
+  barf with Option+( and Option+):
+
+  ```
+  keybind = cmd+shift+9=text:\x1b[40;5u
+  keybind = cmd+shift+0=text:\x1b[41;5u
+  keybind = alt+shift+9=text:\x1b(
+  keybind = alt+shift+0=text:\x1b)
+  ```
+
+  Option+$ types `›` on macOS unless Option is Alt (`macos-option-as-alt`,
+  which takes Option's other characters away too); to have it send `M-$`
+  alone:
+
+  ```
+  keybind = opt+shift+4=text:\x1b$
+  ```
+
+- for `scroll`'s `M-[` and `M-]`: a terminal that sends them. On macOS,
+  Option+[ types `“` unless Option is Alt; in Ghostty, to scroll with
+  Cmd+[ and Cmd+] (which take Ghostty's own split switching):
+
+  ```
+  keybind = super+bracket_left=text:\x1b[
+  keybind = super+bracket_right=text:\x1b]
+  ```
 
 ## Tests
 
