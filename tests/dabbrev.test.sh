@@ -532,7 +532,19 @@ dab undo
 expect "  ... undo: back to what was typed" 'see hello |(|12' "$(line)|$(cursor)"
 editor 'Snapshot of the state'
 typed 'see hello |()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab
-expect "  ... the closer after the cursor already: against it, the cursor before it" 'see (hello)|10' "$(line)|$(cursor)"
+expect "  ... the closer after the cursor already: against it, the cursor after it" 'see (hello)|11' "$(line)|$(cursor)"
+dab undo
+expect "  ... undo: back to what was typed, the cursor before the closer" 'see hello |()|12' "$(line)|$(cursor)"
+editor 'Snapshot of the state' 'The model' 'Then more'
+typed '^Th |()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab expand
+expect "  ... M-/ cycles it, the cursor still after the closer" '(Then)|6' "$(line)|$(cursor)"
+for _ in 1 2 3 4 5; do [[ "$(line)" == '^Th |()' ]] && break; dab expand; done
+expect "  ... past the last, what was typed, the cursor before the closer" '^Th |()|6' "$(line)|$(cursor)"
+tmux set -g @dabbrev-pipe-cursor inside
+editor 'Snapshot of the state'
+typed 'see hello |()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab
+expect "  ... @dabbrev-pipe-cursor inside: the cursor before the closer" 'see (hello)|10' "$(line)|$(cursor)"
+tmux set -gu @dabbrev-pipe-cursor
 editor 'hello world here'
 typed '_h'; dab tab; typed '|('; dab tab
 expect "  ... right after a completion: the whole completion" '(hello world here)|18' "$(line)|$(cursor)"
@@ -557,7 +569,7 @@ typed 'a b |5('; dab tab
 expect "|5(: more words than typed: from where the input starts" '(a b)|5' "$(line)|$(cursor)"
 editor 'Snapshot of the state'
 typed 'One. Two here |.()'; tmux send-keys -t "$PANE" Left; sleep 0.2; dab tab
-expect "|.( with the closer after the cursor: against it" 'One. (Two here)|14' "$(line)|$(cursor)"
+expect "|.( with the closer after the cursor: against it, the cursor after it" 'One. (Two here)|15' "$(line)|$(cursor)"
 editor 'Snapshot of the state'
 typed 'Two here |.('; dab tab
 expect "|.(, the first sentence: from where the input starts" '(Two here)|10' "$(line)|$(cursor)"

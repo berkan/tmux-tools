@@ -67,6 +67,8 @@
 # closer after the cursor already (,rr's re: "|" -- ; or past spaces, but not
 # a quote that begins the next word: present), the completion ends against
 # it, without its space.
+# A pipe (LEFT |( ) ending against it leaves the cursor over it, outside the
+# pair, unless @dabbrev-pipe-cursor is inside.
 #
 #   expand (M-/)  the best word on screen that starts with what was typed:
 #                 the entities before any word (and only they for
@@ -138,6 +140,7 @@ LIST_MARK = re.compile(r'\W*?(?:[-*•+]|\d+[.)])\s+')             # what begins
 # ... stops before it (...Then, .... a sentence without its full stop).
 RUBY_OPTION = '@dabbrev-ruby-ranges'
 PIPE_COMPLETION_OPTION = '@dabbrev-pipe-completion'
+PIPE_CURSOR_OPTION = '@dabbrev-pipe-cursor'      # outside (the default): over a closer there already; inside
 SENTENCE_LINE_START_OPTION = '@dabbrev-sentence-line-start'
 SENTENCE_STOP_OPTION = '@dabbrev-sentence-stop'                 # .ARG with its . ! ? or : (on; off the default)
 SLASH_OPTION = '@dabbrev-slash-open'
@@ -951,7 +954,8 @@ def closed(text, back, close, tight):
 # A backend: typed(pane, key) is (start, typed) for the word before the cursor
 # it takes, else None; complete(pane, start, typed) the alternatives for it,
 # best first, each {'text': what replaces typed, 'back': where the cursor is
-# left, as characters before the end (none: at the end), ...}; follow(pane, start,
+# left, as characters before the end (none: at the end; less than none: so
+# many past it, over what was after the cursor already), ...}; follow(pane, start,
 # chosen) those that go on from the chosen one, for Tab; and if it has one,
 # go_on(pane, start, typed) those that go on from TYPED itself, for Tab when
 # complete has none. An alternative's 'label' is what the hint shows of it,
@@ -1022,7 +1026,7 @@ class Pipe:
     (none: at its end), the cursor after it all; LEFT |( (an opener of
     @tmux-tools-pairs): between the pair, the same way (with the closer
     right after the cursor already, typed by electric-pair: ending against
-    it). LEFT is the operator or chain right before the |, expanded (M-/
+    it, the cursor then over it, unless @dabbrev-pipe-cursor is inside). LEFT is the operator or chain right before the |, expanded (M-/
     cycles it); else a \\TEXT, as it is, words and all; else the one word
     before it, as typed. But right after a completion (spaces between), LEFT
     is that completion, whole (@dabbrev-pipe-completion, on unless off)."""
@@ -1092,13 +1096,18 @@ class Pipe:
 
     @staticmethod
     def into(pane, start, target):
-        """(body, cut): the text TARGET (,NAME or an opener), typed from START,
-        puts LEFT in, at CUT; or None."""
+        """(body, cut, back): the text TARGET (,NAME or an opener), typed from
+        START, puts LEFT in, at CUT, and the cursor's BACK after (as an
+        alternative's: less than none, over the closer there already); or None."""
         if target.startswith(','):
             snippet = Snippets().complete(pane.at(pane.before[:start] + target, pane.after), start, target)
-            return (snippet[0]['text'], len(snippet[0]['text']) - snippet[0].get('back', 0)) if snippet else None
+            return (snippet[0]['text'], len(snippet[0]['text']) - snippet[0].get('back', 0), 0) if snippet else None
         close = pane.pairs()[target]
-        return (target, 1) if present(pane.after, close) else (target + close, 1)
+        if not present(pane.after, close):
+            return target + close, 1, 0
+        if tmux('show-options', '-gqv', PIPE_CURSOR_OPTION).strip() == 'inside':
+            return target, 1, 0
+        return target, 1, -(len(pane.after) - len(pane.after.lstrip(' ')) + len(close))
 
     def typed(self, pane, key):
         m = self.pattern(pane).search(pane.before)
@@ -1123,7 +1132,7 @@ class Pipe:
             state = pane.state(before=pane.before[:end])
             if state:
                 start = state['start'] - (1 if state.get('close') else 0)
-                return start if not shown(state)[1] and start < m.start() else None
+                return start if shown(state)[1] <= 0 and start < m.start() else None
         return None
 
     @staticmethod
@@ -1150,8 +1159,8 @@ class Pipe:
         if m.group('scope'):                        # LEFT is the text the scope gives, as typed
             if not into or not text:
                 return []
-            body, cut = into
-            return [{'text': body[:cut] + text + body[cut:]}]
+            body, cut, back = into
+            return [{'text': body[:cut] + text + body[cut:], 'back': back}]
         completion = self.completion(pane, self.pattern(pane).search(pane.before)) == start
         left = (0, 'completion') if completion else self.left(pane, text)
         if not into or not left or left[0]:
@@ -1169,8 +1178,9 @@ class Pipe:
             if not word:
                 return []
             keep, values = text[:word.start()], [word.group()]
-        body, cut = into
-        return [{'text': keep + body[:cut] + value + body[cut:]} for value in dict.fromkeys(values) if value]
+        body, cut, back = into
+        return [{'text': keep + body[:cut] + value + body[cut:], 'back': back}
+                for value in dict.fromkeys(values) if value]
 
     def follow(self, pane, start, chosen):
         return []
@@ -1832,8 +1842,8 @@ class Pane:
         goes in as a bracketed paste, so the program does not take it as
         Enter."""
         (old, old_back), (new, new_back) = old, new
-        if old_back:
-            tmux('send-keys', '-t', self.pane, '-N', str(old_back), 'Right')
+        if old_back:                            # less than none: the cursor is past OLD's end
+            tmux('send-keys', '-t', self.pane, '-N', str(abs(old_back)), 'Right' if old_back > 0 else 'Left')
         keep = 0
         while keep < min(len(old), len(new)) and old[keep] == new[keep]:
             keep += 1
@@ -1845,11 +1855,12 @@ class Pane:
         elif new[keep:]:
             tmux('send-keys', '-t', self.pane, '-l', '--', new[keep:])
         if new_back:
-            tmux('send-keys', '-t', self.pane, '-N', str(new_back), 'Left')
-        want = new[:len(new) - new_back].split('\n')[-1][-12:]
+            tmux('send-keys', '-t', self.pane, '-N', str(abs(new_back)), 'Left' if new_back > 0 else 'Right')
+        want = new[:len(new) - max(new_back, 0)].split('\n')[-1][-12:]
         end = time.monotonic() + 0.5
         while time.monotonic() < end:
-            if Pane(self.pane).before.endswith(want):
+            before = Pane(self.pane).before
+            if (before[:new_back] if new_back < 0 else before).endswith(want):
                 return
             time.sleep(0.02)
 

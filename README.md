@@ -143,6 +143,7 @@ Each option is a tmux option, set with `set -g`. Defaults in brackets.
 | `@dabbrev-eval-timeout` | the seconds code may run [`5`]; then it is stopped, children and all |
 | `@dabbrev-engines` | the engines file [`~/.config/tmux-dabbrev/engines`] |
 | `@dabbrev-pipe-completion` | right after a completion (`_h` + Tab, then `\|(` + Tab), the pipe's LEFT is that completion, whole: `(hello world)` [on]; `off`: as anywhere else (below) |
+| `@dabbrev-pipe-cursor` | where `LEFT \|(` leaves the cursor when the closer is after it already (electric-pair typed it): `(hello)\|` [`outside`]; `inside`: `(hello\|)` |
 | `@dabbrev-sentence-stop` | `.The` takes the sentence with its `.` `!` `?` or `:` [off] |
 | `@dabbrev-sentence-line-start` | where the input starts ends a sentence too, so that `One here \|.(` gives `(One here)` [on]; `off`: a `\|.` with no stop to go back past takes nothing |
 | `@dabbrev-slash-open` | `on`: a completion that ends in `/` (a coloured `docs/`) ends there, without the space and not closed, as a folder does; typing on narrows it, and Tab completes what starts with it (`docs/design.md`) [off] |
@@ -447,9 +448,11 @@ completion it is the completion, whole, with the quotes or brackets it was
 closed in (`@dabbrev-pipe-completion`).
 
 `LEFT |(` puts LEFT between a pair the same way: `hello |(` gives `(hello)`,
-`_Sn |"` the row in quotes, for each of `@tmux-tools-pairs`. When the closer is already after the cursor
-(electric-pair typed it with the opener), the text ends against it, the
-cursor before it, so typing the closer steps over it.
+`_Sn |"` the row in quotes, for each of `@tmux-tools-pairs`, the cursor
+after the closer. When the closer is already after the cursor (electric-pair
+typed it with the opener), the text ends against it and the cursor goes over
+it, outside the pair; with `@dabbrev-pipe-cursor` `inside`, it stays before
+it, so typing the closer steps over it.
 
 A scope between the `|` and what follows it says how far back LEFT goes,
 LEFT then being the text as typed; a count before the unit takes that many:

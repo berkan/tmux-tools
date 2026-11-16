@@ -218,6 +218,21 @@ expect('  ... \\TEXT, words and all', ['{hello world}'], PIPED, '\\hello world |
 expect('  ... M-/ cycles what is left of it', ['(The)', '(Then)'], PIPED, '^Th |(', 'expand')
 got = alternatives(PIPED, 'hello |(', after=')')
 check('  ... the closer after the cursor already (electric-pair typed it): ended against it', got == ['(hello'], got)
+def pipe_alts(before, after):
+    pane = Pane(PIPED, before, after)
+    return [(alt['text'], alt.get('back', 0)) for alt in d.Pipe().complete(pane, *d.Pipe().typed(pane, 'tab'))]
+got = pipe_alts('hello |(', ')')
+check('  ... the cursor then over the closer, outside the pair (@dabbrev-pipe-cursor)', got == [('(hello', -1)], got)
+got = pipe_alts('hello |(', '  ) more')
+check('  ... past the spaces before it too', got == [('(hello', -3)], got)
+got = pipe_alts('hello |2(', ')')
+check('  ... with a scope the same', got == [('(hello', -1)], got)
+got = pipe_alts('hello |(', '')
+check('  ... no closer after it: the cursor after the one it types, as ever', got == [('(hello)', 0)], got)
+OPTIONS['@dabbrev-pipe-cursor'] = 'inside'
+got = pipe_alts('hello |(', ')')
+check('  ... @dabbrev-pipe-cursor inside: the cursor before the closer', got == [('(hello', 0)], got)
+del OPTIONS['@dabbrev-pipe-cursor']
 got = alternatives(PIPED, 'hello |<')
 check('  ... not a pair: no surround', not got or '<hello>' not in got, got)
 OPTIONS['@tmux-tools-pairs'] = '()<>'
