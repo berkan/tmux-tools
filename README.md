@@ -224,9 +224,11 @@ the cursor leaves it where it was (`Cmd+A`, text typed at the start, back:
 the end of the line). For a jump to another line, it is the cell on
 screen. A pane's history is its program's: respawned, it starts empty.
 
-In jump-click's popup, tmux passes on a key it knows by name (`M-g`,
-`C-M-S-g`), but not a user key (`User1`): for the history there, the back
-or forward key must be one of the first kind (Terminal keys, below).
+In jump-click's popup (the dimmed screen that waits for the character),
+tmux passes on a key it knows by name (`M-g`, `C-M-g`), but not a user key
+(`User1`), and tmux 3.4 not one with Shift and Ctrl or Alt (`C-M-S-g`): for
+the history there, the back or forward key must be one it passes on
+(Terminal keys, below).
 
 A mark key must not be bound in tmux for anything else; it waits, a moment, for the cursor to move before the keys
 after it go on, so the place is read from the text it left.
@@ -526,18 +528,18 @@ The keys reach tmux only as the terminal sends them.
 
 - for `jump-click`'s back and forward keys: any keys the terminal sends,
   named in `@jump-click-back-key` and `@jump-click-forward-key`. To use
-  them in the popup too, they must be keys tmux knows by name, not user
-  keys. In Ghostty, for Cmd+Shift+G and Cmd+G as `C-M-S-b` (b: back) and `C-M-S-g`
-  (CSI u):
+  them in jump-click's popup too, they must be keys tmux knows by name,
+  without Shift (above). In Ghostty, for Cmd+Shift+G and Cmd+G as `C-M-b`
+  (b: back) and `C-M-g` (CSI u):
 
   ```
-  keybind = cmd+shift+g=csi:98;8u
-  keybind = cmd+g=csi:103;8u
+  keybind = cmd+shift+g=csi:98;7u
+  keybind = cmd+g=csi:103;7u
   ```
 
   ```
-  set -g @jump-click-back-key C-M-S-b
-  set -g @jump-click-forward-key C-M-S-g
+  set -g @jump-click-back-key C-M-b
+  set -g @jump-click-forward-key C-M-g
   ```
 
 - for `scroll`'s `M-[` and `M-]`: a terminal that sends them. On macOS,

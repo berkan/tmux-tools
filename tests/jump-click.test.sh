@@ -398,19 +398,20 @@ c = m.SourceFileLoader('c', sys.argv[1]).load_module()
 print(*[c.key_bytes(k).hex() if c.key_bytes(k) else 'none' for k in ['C-M-S-g', 'M-G', 'M-g', 'C-g', 'User2', 'F5']])
 EOF
 )"
-# \e[103;8u is C-M-S-g to tmux, which passes it on to a popup as Esc C-g.
-inner set -g @jump-click-forward-key C-M-S-g
+# \e[103;7u is C-M-g to tmux, which passes it on to a popup as Esc C-g (with
+# Shift too, tmux 3.4 passes it on as nothing).
+inner set -g @jump-click-forward-key C-M-g
 bash_line 'echo alpha beta gamma'
-pick b; pick $'\e[103;8u'
+pick b; pick $'\e[103;7u'
 expect "in the popup, the forward key: the history's places; one: gone to at once" "alpha beta gammaX" "$(ran)"
 bash_line 'echo alpha beta gamma'
-pick b; pick a; pick $'\e[103;8u' s
+pick b; pick a; pick $'\e[103;7u' s
 expect "  ... several: labelled, the nearest back first" "alpha beta gammaX" "$(ran)"
 bash_line 'echo alpha beta gamma'
-pick b; pick a; back; pick $'\e[103;8u' s
+pick b; pick a; back; pick $'\e[103;7u' s
 expect "  ... then forward" "Xalpha beta gamma" "$(ran)"
 bash_line 'echo alpha beta gamma'
-pick $'\e[103;8u'
+pick $'\e[103;7u'
 expect "  ... none: nothing" "alpha beta gammaX" "$(ran)"
 inner set -gu @jump-click-forward-key
 run_pane "python3 $SCRATCH/editor.py $SCRATCH/rec.log clicks 'alpha beta gamma'"
