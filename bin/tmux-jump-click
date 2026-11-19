@@ -466,9 +466,12 @@ def save(pane, info, history):
 
 
 def resolve(line, place):
-    """(row, col, index) of PLACE now: index in LINE's text, None if not on it."""
+    """(row, col, index) of PLACE now: index in LINE's text, None if not on it.
+    Its place in the text counts only on LINE (the cursor's): a place on
+    another line, as each row of an input the program wraps itself, keeps its
+    cell."""
     row, col, where = place
-    if where:
+    if where and line[0] <= row <= line[1]:
         side, n = where.split()
         text = line[2]
         i = max(0, min(len(text), int(n) if side == 'start' else len(text) - int(n)))

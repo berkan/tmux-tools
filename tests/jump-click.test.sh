@@ -391,6 +391,17 @@ expect "a jump after back: no forward left" "alpha beta Xgamma" "$(ran)"
 bash_line 'echo alpha beta gamma'
 pick b; pick a; inner send-keys -t "$PANE" -l 'one '; sleep 0.2; back; back
 expect "text typed at the cursor: each place kept in the text" "one alpha beta gammaX" "$(ran)"
+# A program that wraps its input itself (Claude Code) has a line per row: a
+# place kept in another row's text stays in that row, not the cursor's.
+expect "a place in another line's text: where it was" "(3, 10, None) (5, 2, 2) [[(3, 10, None), (5, 2, 'start 2')]]" "$(python3 - "$CLICK" <<'EOF'
+import importlib.machinery as m, sys
+sys.dont_write_bytecode = True
+c = m.SourceFileLoader('c', sys.argv[1]).load_module()
+line = (5, 5, '  also: hello world', 80)              # the cursor's line: row 5
+print(c.resolve(line, (3, 10, 'start 44')), c.resolve(line, (5, 9, 'start 2')),
+      c.moved_to(line, [[(3, 10, 'start 44'), (5, 9, 'start 2')]], 10))
+EOF
+)"
 expect "a key's bytes in the popup: as tmux passes them on" "1b07 1b47 1b67 07 none none" "$(python3 - "$CLICK" <<'EOF'
 import importlib.machinery as m, sys
 sys.dont_write_bytecode = True
