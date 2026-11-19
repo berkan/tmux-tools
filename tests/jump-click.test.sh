@@ -361,29 +361,78 @@ pick b a
 expect "a place on the cursor's line still gets arrow keys" "alpha Xbeta" \
     "$(inner send-keys -t "$PANE" X Enter; sleep 0.3; inner capture-pane -p -t "$PANE" | sed -n 4p)"
 
-echo "back (@jump-click-back-key): to where the cursor was before a jump"
+echo "back and forward (@jump-click-back-key, @jump-click-forward-key): the jumps' history"
 back() { TMUX="$SOCKET,0,0" python3 "$CLICK" back "$PANE"; sleep 0.3; }
+forward() { TMUX="$SOCKET,0,0" python3 "$CLICK" forward "$PANE"; sleep 0.3; }
 bash_line 'echo alpha beta gamma'
 pick b; back
 expect "after a jump: back where it was" "alpha beta gammaX" "$(ran)"
 bash_line 'echo alpha beta gamma'
 pick b; back; back
-expect "  ... and again: back where the jump went" "alpha Xbeta gamma" "$(ran)"
+expect "  ... and again: nothing further back" "alpha beta gammaX" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; back; forward
+expect "  ... forward: where the jump went" "alpha Xbeta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; back
+expect "two jumps, back: where the second went from" "alpha Xbeta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; back; back
+expect "  ... back again: where the first went from" "alpha beta gammaX" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; back; back; forward; forward
+expect "  ... forward twice: where the second went" "Xalpha beta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; back; back; forward; forward; forward
+expect "  ... and again: nothing further forward" "Xalpha beta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; back; pick g; forward
+expect "a jump after back: no forward left" "alpha beta Xgamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; inner send-keys -t "$PANE" -l 'one '; sleep 0.2; back; back
+expect "text typed at the cursor: each place kept in the text" "one alpha beta gammaX" "$(ran)"
+expect "a key's bytes in the popup: as tmux passes them on" "1b07 1b47 1b67 07 none none" "$(python3 - "$CLICK" <<'EOF'
+import importlib.machinery as m, sys
+sys.dont_write_bytecode = True
+c = m.SourceFileLoader('c', sys.argv[1]).load_module()
+print(*[c.key_bytes(k).hex() if c.key_bytes(k) else 'none' for k in ['C-M-S-g', 'M-G', 'M-g', 'C-g', 'User2', 'F5']])
+EOF
+)"
+# \e[103;8u is C-M-S-g to tmux, which passes it on to a popup as Esc C-g.
+inner set -g @jump-click-forward-key C-M-S-g
+bash_line 'echo alpha beta gamma'
+pick b; pick $'\e[103;8u'
+expect "in the popup, the forward key: the history's places; one: gone to at once" "alpha beta gammaX" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; pick $'\e[103;8u' s
+expect "  ... several: labelled, the nearest back first" "alpha beta gammaX" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; pick a; back; pick $'\e[103;8u' s
+expect "  ... then forward" "Xalpha beta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick $'\e[103;8u'
+expect "  ... none: nothing" "alpha beta gammaX" "$(ran)"
+inner set -gu @jump-click-forward-key
 run_pane "python3 $SCRATCH/editor.py $SCRATCH/rec.log clicks 'alpha beta gamma'"
 pick b; back
 expect "  ... in a program that takes clicks" "1 18" "$(inner display -p -t "$PANE" '#{cursor_y} #{cursor_x}' | awk '{print $1+1, $2}')"
-inner set -pu -t "$PANE" @jump-click-from         # a pane keeps its options when respawned
-bash_line 'echo alpha beta gamma'
+bash_line 'echo alpha beta gamma'          # respawned: a new program, no history
 back
 expect "  ... no jump yet: nothing" "alpha beta gammaX" "$(ran)"
 inner set -g @jump-click-mark-keys 'C-a C-e'
 inner set -g @jump-click-back-key 'M-g'
+inner set -g @jump-click-forward-key 'M-h'
 inner run-shell "python3 $CLICK bind"
 bash_line 'echo alpha beta'
 tmux -L "$OUTER" send-keys C-a; sleep 0.3
 expect "@jump-click-mark-keys: the key still does what it did (bash: after its prompt)" "1 2" "$(inner display -p -t "$PANE" '#{cursor_y} #{cursor_x}' | awk '{print $1+1, $2}')"
 tmux -L "$OUTER" send-keys M-g; sleep 0.5
 expect "  ... and back (the @jump-click-back-key) goes to before it" "alpha betaX" "$(ran)"
+bash_line 'echo alpha beta'
+tmux -L "$OUTER" send-keys C-a; sleep 0.3
+tmux -L "$OUTER" send-keys M-g; sleep 0.5
+tmux -L "$OUTER" send-keys M-h; sleep 0.5
+expect "  ... and forward (the @jump-click-forward-key) to where the key went" "Xecho alpha beta" "$(inner send-keys -t "$PANE" X Enter; sleep 0.3; inner capture-pane -p -t "$PANE" -J | sed -n 1p | sed 's/^\$ //; s/ *$//')"
 bash_line 'echo alpha beta'
 tmux -L "$OUTER" send-keys C-a; sleep 0.3
 inner send-keys -t "$PANE" -N 5 Right; inner send-keys -t "$PANE" -l 'new '; sleep 0.2
@@ -403,9 +452,9 @@ inner send-keys -t "$PANE" -l 'echo bravo'; inner send-keys -t "$PANE" Enter; sl
 inner send-keys -t "$PANE" -l 'echo alpha beta'; sleep 0.2
 pick b s; back
 expect "after a jump in copy mode: copy mode left" "0" "$(inner display -p -t "$PANE" '#{pane_in_mode}')"
-inner set -gu @jump-click-mark-keys; inner set -gu @jump-click-back-key
+inner set -gu @jump-click-mark-keys; inner set -gu @jump-click-back-key; inner set -gu @jump-click-forward-key
 inner run-shell "python3 $CLICK bind"
-expect "  ... unset: the keys unbound" "" "$(inner list-keys -T root | grep -E ' (C-a|C-e|M-g) ' || true)"
+expect "  ... unset: the keys unbound" "" "$(inner list-keys -T root | grep -E ' (C-a|C-e|M-g|M-h) ' || true)"
 
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]

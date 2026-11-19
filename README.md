@@ -203,22 +203,32 @@ Claude Code shows a short path (`drafts/x.md`) for the file it links
 | `prefix` then the key, a character, the label | jump there: a place the program's cursor can reach (red) moves that cursor (a click, or arrow keys); any other (blue) goes there in copy mode with a selection begun |
 
 `^` as the character labels the start of each line. While selecting, a
-second jump moves the selection's end.
+second jump moves the selection's end. The back or forward key (below), in
+place of the character, labels the places in the pane's history, the
+nearest back first, then forward.
 
 | option | |
 |---|---|
 | `@jump-click-key` | the key(s) after the prefix [`C-j`]; several separated by spaces |
-| `@jump-click-back-key` | the key, without the prefix, that goes back to where the cursor was before the last jump [none] |
+| `@jump-click-back-key` | the key, without the prefix, that goes back to where the cursor was before the last jump, and before the one before that, ... [none] |
+| `@jump-click-forward-key` | the key, without the prefix, that goes forward again, to where back came from [none] |
 | `@jump-click-mark-keys` | other keys, without the prefix, that count as jumps, e.g. `C-a C-e` [none]: each notes where the cursor is, then goes on to the program as it is |
 
-Back moves the program's cursor the way a jump does, and the place it
-leaves becomes the one to go back to, so pressing it again returns. After
-a jump in copy mode it leaves copy mode. One place per pane, kept as a
-place in the line's text, as an Emacs marker: counted from the end away
-from the cursor, so text typed at the cursor leaves it where it was (`Cmd+A`,
-text typed at the start, back: the end of the line). For a jump to another
-line, it is the cell on screen. A mark key must not be bound in tmux for
-anything else; it waits, a moment, for the cursor to move before the keys
+Each pane keeps a history of its jumps, as a browser does: back goes to
+where the cursor was before the last jump, then before the one before;
+forward retraces them; a jump after back drops what was forward. Both move
+the program's cursor the way a jump does. After a jump in copy mode, back
+leaves copy mode. Each place is kept as a place in the line's text, as an
+Emacs marker: counted from the end away from the cursor, so text typed at
+the cursor leaves it where it was (`Cmd+A`, text typed at the start, back:
+the end of the line). For a jump to another line, it is the cell on
+screen. A pane's history is its program's: respawned, it starts empty.
+
+In jump-click's popup, tmux passes on a key it knows by name (`M-g`,
+`C-M-S-g`), but not a user key (`User1`): for the history there, the back
+or forward key must be one of the first kind (Terminal keys, below).
+
+A mark key must not be bound in tmux for anything else; it waits, a moment, for the cursor to move before the keys
 after it go on, so the place is read from the text it left.
 
 ### expand-region
@@ -512,6 +522,22 @@ The keys reach tmux only as the terminal sends them.
 
   ```
   keybind = opt+shift+4=text:\x1b$
+  ```
+
+- for `jump-click`'s back and forward keys: any keys the terminal sends,
+  named in `@jump-click-back-key` and `@jump-click-forward-key`. To use
+  them in the popup too, they must be keys tmux knows by name, not user
+  keys. In Ghostty, for Cmd+Shift+G and Cmd+G as `C-M-S-b` (b: back) and `C-M-S-g`
+  (CSI u):
+
+  ```
+  keybind = cmd+shift+g=csi:98;8u
+  keybind = cmd+g=csi:103;8u
+  ```
+
+  ```
+  set -g @jump-click-back-key C-M-S-b
+  set -g @jump-click-forward-key C-M-S-g
   ```
 
 - for `scroll`'s `M-[` and `M-]`: a terminal that sends them. On macOS,

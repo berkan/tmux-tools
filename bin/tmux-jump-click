@@ -23,6 +23,11 @@
 # Labels go to the places the cursor can reach first, then by distance from
 # the cursor; the nearest get one key, the rest two (or more). A blue label
 # also starts a selection there, as v would: the next jump moves its end.
+# Instead of the character, the forward or back key labels the places in the
+# pane's history (below), the nearest back first, then forward; picking one
+# is a jump like any other. tmux passes the popup a key it knows by name
+# (C-M-S-g) as a program would get it (\e^G), but none of a user key (User2):
+# such a key does nothing there.
 # Backspace takes back the last key; at the labels' first key, it goes back to
 # typing the character. Esc, or a key that matches nothing, cancels. The pane leaves copy mode first,
 # unless a selection is being made there: then every place on the copy-mode
@@ -30,26 +35,30 @@
 # end.
 #
 #
-# Back: tmux-jump-click back PANE returns the program's cursor to where it was
-# before the last jump (the same way: a click, or Left/Right), and the place
-# it leaves becomes the one to go back to, so back again returns. After a jump
-# in copy mode it leaves copy mode. Keys in @jump-click-mark-keys (C-a C-e:
-# none by default) count as jumps too: each first notes where the cursor is,
-# then goes on to the program as it is. The place is kept as a place in the
-# line's text, counted from the end away from the cursor, as an Emacs marker
-# moves: text typed at the cursor leaves it where it was in the text (on
-# the cursor's line; elsewhere, or after a jump to another line, it is the
-# cell on screen it was).
+# Back and forward: each pane keeps a history of its jumps, as a browser
+# does. tmux-jump-click back PANE returns the program's cursor to where it
+# was before the last jump (the same way: a click, or Left/Right), and again
+# to where it was before the one before; tmux-jump-click forward PANE goes
+# the other way, to where back came from. A jump after back drops what was
+# forward. After a jump in copy mode, back leaves copy mode. Keys in
+# @jump-click-mark-keys (C-a C-e: none by default) count as jumps too: each
+# first notes where the cursor is, then goes on to the program as it is.
+# Each place is kept as a place in the line's text, counted from the end away
+# from the cursor, as an Emacs marker moves: text typed at the cursor leaves
+# it where it was in the text (on the cursor's line; elsewhere, or after a
+# jump to another line, it is the cell on screen it was). The history is the
+# program's: a pane respawned starts with none.
 #
 #   tmux-jump-click bind   bind the keys in the @jump-click-key option (default
-#       C-j; several separated by spaces) after the prefix, the one in
-#       @jump-click-back-key (none by default) and those in
-#       @jump-click-mark-keys without it; run it from tmux.conf after setting
+#       C-j; several separated by spaces) after the prefix, the ones in
+#       @jump-click-back-key and @jump-click-forward-key (none by default)
+#       and those in @jump-click-mark-keys without it; run it from tmux.conf after setting
 #       the options
 #   tmux-jump-click --pick SCREEN FIRST LAST CY CX MY MX OUT   (internal) the
 #       popup's side: read the keys, write "row col" of the pick to OUT; FIRST
 #       to LAST are the rows the cursor can reach, (CY, CX) the cursor, (MY, MX)
-#       the cell to mark, -1 -1 for none
+#       the cell to mark, -1 -1 for none; a file "history" beside OUT: the
+#       history keys' bytes in hex, then "row col" of each place
 import os
 import shlex
 import subprocess
@@ -165,9 +174,35 @@ def ordered(places, first, last, cy, cx):
                                          abs(p[0] - cy), abs(p[1] - cx), p))
 
 
+def key_bytes(name):
+    """The bytes a program in tmux gets for the key NAME (C-M-S-g: Esc C-g), as
+    a popup does; None for a key that is not one character with modifiers."""
+    mods = set()
+    while len(name) > 2 and name[1] == '-' and name[0] in 'CMS':
+        mods.add(name[0])
+        name = name[2:]
+    if len(name) != 1:
+        return None
+    ch = name
+    if 'C' in mods:
+        if not ('?' <= ch.upper() <= '_' or ch == ' '):
+            return None
+        ch = chr(ord(ch.upper()) & 0x1f)
+    elif 'S' in mods:
+        ch = ch.upper()
+    return (b'\x1b' if 'M' in mods else b'') + ch.encode()
+
+
 def pick(screen_file, first, last, cy, cx, my, mx, out_file):
     with open(screen_file, encoding='utf-8') as f:
         screen = f.read().split('\n')
+    history_keys, history = [], []
+    history_file = os.path.join(os.path.dirname(out_file), 'history')
+    if os.path.exists(history_file):
+        with open(history_file) as f:
+            head, *rows = f.read().split('\n')
+        history_keys = [bytes.fromhex(h) for h in head.split()]
+        history = [tuple(map(int, r.split())) for r in rows if r.strip()]
     width = os.get_terminal_size().columns
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
@@ -177,10 +212,16 @@ def pick(screen_file, first, last, cy, cx, my, mx, out_file):
         # Tells tests the popup is up and waiting for keys.
         open(os.path.join(os.path.dirname(out_file), 'ready'), 'w').close()
         while True:
-            key = os.read(fd, 8).decode('utf-8', 'replace')
-            if len(key) != 1 or not key.isprintable():
+            raw = os.read(fd, 8)
+            key = raw.decode('utf-8', 'replace')
+            if raw in history_keys:
+                if not history:
+                    return
+                places = history
+            elif len(key) != 1 or not key.isprintable():
                 return
-            places = ordered(matches(screen, key), first, last, cy, cx)
+            else:
+                places = ordered(matches(screen, key), first, last, cy, cx)
             labels = labels_for(len(places))
             typed, kept = '', list(zip(places, labels))
             while len(kept) > 1:
@@ -327,18 +368,26 @@ def cursor_moved(pane, before, wait=0.3):
         time.sleep(0.03)
 
 
-FIELDS = ['pane_in_mode', 'pane_width', 'pane_height', 'cursor_x', 'cursor_y',
+FIELDS = ['pane_in_mode', 'pane_pid', 'pane_width', 'pane_height', 'cursor_x', 'cursor_y',
           'mouse_any_flag', 'mouse_sgr_flag', 'selection_active', 'scroll_position',
           'copy_cursor_x', 'copy_cursor_y', 'history_size',
           'selection_start_x', 'selection_start_y']
 
 
-def choose(pane, client, info, screen, first, last, cy, cx, mark=(-1, -1)):
-    """(row, col) picked in the popup over PANE showing SCREEN, or None."""
+def choose(pane, client, info, screen, first, last, cy, cx, mark=(-1, -1), history=()):
+    """(row, col) picked in the popup over PANE showing SCREEN, or None.
+    HISTORY: the places the history keys label."""
     with tempfile.TemporaryDirectory(prefix='tmux-jump-click.') as tmp:
         screen_file, out_file = os.path.join(tmp, 'screen'), os.path.join(tmp, 'pick')
         with open(screen_file, 'w', encoding='utf-8') as f:
             f.write(screen)
+        keys = [key_bytes(k) for way in ('back', 'forward')
+                for k in tmux('show-options', '-gqv', f'@jump-click-{way}-key').split()[:1]]
+        keys = [k for k in keys if k]
+        if keys:
+            with open(os.path.join(tmp, 'history'), 'w') as f:
+                f.write(' '.join(k.hex() for k in keys) + '\n')
+                f.write(''.join('%d %d\n' % p for p in history))
         cmd = ' '.join(shlex.quote(str(a)) for a in
                        [sys.executable, os.path.abspath(__file__), '--pick', screen_file,
                         first, last, cy, cx, *mark, out_file])
@@ -372,7 +421,8 @@ def main(pane, client):
     screen = tmux('capture-pane', '-p', '-t', pane).rstrip('\n')
     lines = screen.split('\n')
     first, last = reachable_rows(pane, info, lines)
-    picked = choose(pane, client, info, screen, first, last, info['cursor_y'], info['cursor_x'])
+    picked = choose(pane, client, info, screen, first, last, info['cursor_y'], info['cursor_x'],
+                    history=history_places(pane, info, len(lines)))
     if not picked:
         return
     row, col = picked
@@ -380,24 +430,88 @@ def main(pane, client):
         copy_mode_jump(pane, lines, row, col, select=True)
         return
     here = (int(info['cursor_y']), int(info['cursor_x']))
-    on = on_line(pane, info)
-    remember(pane, *here, on and anchor(on[2], index_at(on, *here), index_at(on, row, col)))
+    line = on_line(pane, info)
+    record(pane, info, line, here, index_at(line, row, col))
     if not go(pane, info, row, col):
         copy_mode_jump(pane, lines, row, col)
 
 
-FROM = '@jump-click-from'                   # where back goes: "row col", per pane
-FROM_IN = '@jump-click-from-in'             # and in the line's text: "start N" or "end N"
+BACK = '@jump-click-back'                   # the history, per pane: places
+FORWARD = '@jump-click-forward'             # back and forward go to, the
+PID = '@jump-click-pid'                     # nearest last; and whose it is
+KEEP = 100                                  # places kept back
 
 
-def remember(pane, row, col, place=None):
-    """Note (ROW, COL) as where back goes; PLACE, its place in the line's
-    text (anchor), when known."""
-    tmux('set-option', '-p', '-t', pane, FROM, f'{row} {col}')
-    if place:
-        tmux('set-option', '-p', '-t', pane, FROM_IN, place)
-    else:
-        tmux('set-option', '-pu', '-t', pane, FROM_IN)
+def load(pane, info):
+    """[back, forward]: lists of places (row, col, anchor or None), the
+    nearest last; empty when the history is another program's."""
+    if tmux('show-options', '-pqv', '-t', pane, PID).strip() != info['pane_pid']:
+        return [[], []]
+    out = []
+    for name in (BACK, FORWARD):
+        places = []
+        for item in tmux('show-options', '-pqv', '-t', pane, name).strip().split(','):
+            f = item.split()
+            if len(f) in (2, 4):
+                places.append((int(f[0]), int(f[1]), ' '.join(f[2:]) or None))
+        out.append(places)
+    return out
+
+
+def save(pane, info, history):
+    tmux('set-option', '-p', '-t', pane, PID, info['pane_pid'])
+    for name, places in zip((BACK, FORWARD), history):
+        text = ','.join(' '.join(str(x) for x in p if x is not None) for p in places[-KEEP:])
+        tmux('set-option', '-p', '-t', pane, name, text)
+
+
+def resolve(line, place):
+    """(row, col, index) of PLACE now: index in LINE's text, None if not on it."""
+    row, col, where = place
+    if where:
+        side, n = where.split()
+        text = line[2]
+        i = max(0, min(len(text), int(n) if side == 'start' else len(text) - int(n)))
+        return (*cell_at(line, i), i)
+    return row, col, index_at(line, row, col)
+
+
+def moved_to(line, history, cursor):
+    """HISTORY anchored again for the cursor at index CURSOR of LINE's text:
+    a place after it is counted from the line's end, the rest from its start;
+    as it was when CURSOR is None (the cursor off the line)."""
+    if cursor is None:
+        return history
+    out = []
+    for places in history:
+        out.append([])
+        for p in places:
+            row, col, i = resolve(line, p)
+            out[-1].append((row, col, anchor(line[2], i, cursor)))
+    return out
+
+
+def history_places(pane, info, height):
+    """(row, col) of each place in the history, now: the nearest back first,
+    then forward; each once, none off screen nor where the cursor is."""
+    back, forward = load(pane, info)
+    line = on_line(pane, info)
+    out = [(int(info['cursor_y']), int(info['cursor_x']))]
+    for p in back[::-1] + forward[::-1]:
+        cell = resolve(line, p)[:2]
+        if cell not in out and 0 <= cell[0] < height:
+            out.append(cell)
+    return out[1:]
+
+
+def record(pane, info, line, here, cursor):
+    """A jump from HERE (row, col) to index CURSOR of LINE's text (None: off
+    it): HERE goes on the back list, and forward is emptied."""
+    back, _ = load(pane, info)
+    i = index_at(line, *here)
+    if not (back and resolve(line, back[-1])[:2] == here):
+        back.append((*here, anchor(line[2], i, cursor)))
+    save(pane, info, moved_to(line, [back, []], cursor))
 
 
 def on_line(pane, info):
@@ -445,30 +559,28 @@ def go(pane, info, row, col):
     return move_cursor(pane, info, row, col)
 
 
-def back(pane):
-    """Back to where the cursor was before the last jump (see above)."""
+def travel(pane, way):
+    """Back (WAY 0) or forward (1) in the pane's history (see above)."""
     info = read_info(pane)
     if info['pane_in_mode'] == '1':
-        tmux('send-keys', '-t', pane, '-X', 'cancel')
+        if way == 0:
+            tmux('send-keys', '-t', pane, '-X', 'cancel')
         return
-    was = tmux('show-options', '-pqv', '-t', pane, FROM).split()
-    if len(was) != 2:
-        return
-    row, col = map(int, was)
-    place = tmux('show-options', '-pqv', '-t', pane, FROM_IN).strip()
+    before = load(pane, info)
+    history = [list(places) for places in before]
     here = (int(info['cursor_y']), int(info['cursor_x']))
     line = on_line(pane, info)
-    target = None
-    if place:                                   # where it is in the text now
-        side, n = place.split()
-        text = line[2]
-        target = max(0, min(len(text), int(n) if side == 'start' else len(text) - int(n)))
-        row, col = cell_at(line, target)
-    if (row, col) == here:
+    src, dst = history[way], history[1 - way]
+    while src:                          # a place where the cursor is: passed
+        row, col, i = resolve(line, src.pop())
+        if (row, col) != here:
+            break
+    else:
         return
-    remember(pane, *here, anchor(line[2], index_at(line, *here), target if target is not None else index_at(line, row, col)))
+    dst.append((*here, anchor(line[2], index_at(line, *here), i)))
+    save(pane, info, moved_to(line, history, i))
     if not go(pane, info, row, col):
-        remember(pane, *map(int, was), place)   # not there: kept for another try
+        save(pane, info, before)            # not there: kept for another try
 
 
 def mark(pane, key):
@@ -478,15 +590,11 @@ def mark(pane, key):
     until this is done, so the text read is the text the key left."""
     info = read_info(pane)
     here = (int(info['cursor_y']), int(info['cursor_x']))
-    remember(pane, *here)
     tmux('send-keys', '-t', pane, key)
-    if not cursor_moved(pane, here, wait=0.15):
-        return
+    cursor_moved(pane, here, wait=0.15)
     info = read_info(pane)
     line = on_line(pane, info)
-    place = anchor(line[2], index_at(line, *here), index_at(line, int(info['cursor_y']), int(info['cursor_x'])))
-    if place:
-        tmux('set-option', '-p', '-t', pane, FROM_IN, place)
+    record(pane, info, line, here, index_at(line, int(info['cursor_y']), int(info['cursor_x'])))
 
 
 def unbind_ours(table, key):
@@ -512,10 +620,12 @@ def bind():
             unbind_ours('prefix', key)
     tmux('set-option', '-g', '@jump-click-bound-key', ' '.join(keys))
     script = os.path.abspath(__file__)
-    root = tmux('show-options', '-gqv', '@jump-click-back-key').split()[:1]
+    travel = [(way, key) for way in ('back', 'forward')
+              for key in tmux('show-options', '-gqv', f'@jump-click-{way}-key').split()[:1]]
+    root = [key for _, key in travel]
     marks = [k for k in tmux('show-options', '-gqv', '@jump-click-mark-keys').split() if k not in root]
-    for key in root:
-        tmux('bind-key', '-n', key, 'run-shell', '-b', f"{script} back '#{{pane_id}}'")
+    for way, key in travel:
+        tmux('bind-key', '-n', key, 'run-shell', '-b', f"{script} {way} '#{{pane_id}}'")
     for key in marks:
         tmux('bind-key', '-n', key, 'run-shell', f"{script} mark '#{{pane_id}}' {shlex.quote(key)}")
     for key in tmux('show-options', '-gqv', '@jump-click-bound-root').split():
@@ -529,8 +639,8 @@ if __name__ == '__main__':
         pick(sys.argv[2], *map(int, sys.argv[3:9]), sys.argv[9])
     elif sys.argv[1:] == ['bind']:
         bind()
-    elif sys.argv[1:2] == ['back'] and len(sys.argv) == 3:
-        back(sys.argv[2])
+    elif sys.argv[1:2] in (['back'], ['forward']) and len(sys.argv) == 3:
+        travel(sys.argv[2], ['back', 'forward'].index(sys.argv[1]))
     elif sys.argv[1:2] == ['mark'] and len(sys.argv) == 4:
         mark(sys.argv[2], sys.argv[3])
     else:
