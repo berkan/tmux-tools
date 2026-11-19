@@ -224,7 +224,11 @@ leaves copy mode. Each place is kept as a place in the line's text, as an
 Emacs marker: counted from the end away from the cursor, so text typed at
 the cursor leaves it where it was (`Cmd+A`, text typed at the start, back:
 the end of the line). For a jump to another line, it is the cell on
-screen. A pane's history is its program's: respawned, it starts empty.
+screen. The history is the input's: when the input's text is no longer
+mostly what it was (a new prompt, a shell's next line), it is gone; when
+the input has moved as a whole (Claude Code's, as its transcript grows),
+its places move with it. Scrolling in copy mode moves nothing, and keeps
+it. A respawned pane starts with none.
 
 In jump-click's popup (the dimmed screen that waits for the character),
 tmux passes on a key it knows by name (`M-g`, `C-M-g`), but not a user key

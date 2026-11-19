@@ -48,7 +48,10 @@
 # from the cursor, as an Emacs marker moves: text typed at the cursor leaves
 # it where it was in the text (on the cursor's line; elsewhere, or after a
 # jump to another line, it is the cell on screen it was). The history is the
-# program's: a pane respawned starts with none.
+# input's: when the text of the rows the cursor can reach is no longer
+# mostly what it was (a new prompt, a shell's next line), it is gone; when
+# that text has moved as a whole, its places move with it. Scrolling in copy
+# mode moves nothing. A pane respawned starts with none.
 #
 #   tmux-jump-click bind   bind the keys in the @jump-click-key option (default
 #       C-j; several separated by spaces) after the prefix, the ones in
@@ -439,14 +442,55 @@ def main(pane, client):
 
 BACK = '@jump-click-back'                   # the history, per pane: places
 FORWARD = '@jump-click-forward'             # back and forward go to, the
-PID = '@jump-click-pid'                     # nearest last; and whose it is
+PID = '@jump-click-pid'                     # nearest last; whose it is;
+INPUT = '@jump-click-input'                 # and the input it is in
 KEEP = 100                                  # places kept back
+MARKS = '$#%>'                              # a prompt's marks, as ❯ ›
 
 
-def load(pane, info):
+def input_area(pane, info):
+    """(first row, text) of the input the cursor is in: the rows it can reach."""
+    lines = tmux('capture-pane', '-p', '-t', pane).rstrip('\n').split('\n')
+    first, last = reachable_rows(pane, info, lines)
+    return first, '\n'.join(line.rstrip() for line in lines[first:last + 1])
+
+
+def same_input(old, new):
+    """Whether NEW is the input OLD was, edited: most of OLD's text is still
+    at its start or its end (edits between jumps are local), not counting
+    the prompt's marks. A new prompt, or a shell's next line, shares little."""
+    def text(t):
+        return t.lstrip(''.join(c for c in t[:8] if c.isspace() or c in MARKS
+                                or not (c.isascii() or c.isalnum())))
+    a, b = text(old), text(new)
+    if not a:
+        return not b
+    n = min(len(a), len(b))
+    p = next((i for i in range(n) if a[i] != b[i]), n)
+    q = next((i for i in range(n - p) if a[-1 - i] != b[-1 - i]), n - p)
+    return 2 * (p + q) > len(a)
+
+
+def carried(history, was, now):
+    """HISTORY, kept in the input WAS (first row, text), as it is in the input
+    NOW: gone when that is another input; when it is the same text moved as a
+    whole, its places moved with it."""
+    if not same_input(was[1], now[1]):
+        return [[], []]
+    if was[1] == now[1] and was[0] != now[0]:
+        d = now[0] - was[0]
+        return [[(row + d, col, where) for row, col, where in places] for places in history]
+    return history
+
+
+def load(pane, info, now):
     """[back, forward]: lists of places (row, col, anchor or None), the
-    nearest last; empty when the history is another program's."""
+    nearest last; empty when the history is another program's, or another
+    input's than NOW (input_area)."""
     if tmux('show-options', '-pqv', '-t', pane, PID).strip() != info['pane_pid']:
+        return [[], []]
+    first, _, text = tmux('show-options', '-pqv', '-t', pane, INPUT).rstrip('\n').partition('\n')
+    if not first.lstrip('-').isdigit():
         return [[], []]
     out = []
     for name in (BACK, FORWARD):
@@ -456,11 +500,12 @@ def load(pane, info):
             if len(f) in (2, 4):
                 places.append((int(f[0]), int(f[1]), ' '.join(f[2:]) or None))
         out.append(places)
-    return out
+    return carried(out, (int(first), text), now)
 
 
-def save(pane, info, history):
+def save(pane, info, history, now):
     tmux('set-option', '-p', '-t', pane, PID, info['pane_pid'])
+    tmux('set-option', '-p', '-t', pane, INPUT, '%d\n%s' % now)
     for name, places in zip((BACK, FORWARD), history):
         text = ','.join(' '.join(str(x) for x in p if x is not None) for p in places[-KEEP:])
         tmux('set-option', '-p', '-t', pane, name, text)
@@ -498,7 +543,7 @@ def moved_to(line, history, cursor):
 def history_places(pane, info, height):
     """(row, col) of each place in the history, now: the nearest back first,
     then forward; each once, none off screen nor where the cursor is."""
-    back, forward = load(pane, info)
+    back, forward = load(pane, info, input_area(pane, info))
     line = on_line(pane, info)
     out = [(int(info['cursor_y']), int(info['cursor_x']))]
     for p in back[::-1] + forward[::-1]:
@@ -512,13 +557,14 @@ def record(pane, info, line, here, to):
     """A jump from HERE to TO (row, col): TO goes on the back list, after HERE
     when the list is empty, and forward is emptied. The back list ends with
     where the last jump went, not where the cursor went after it."""
-    back, _ = load(pane, info)
+    now = input_area(pane, info)
+    back, _ = load(pane, info, now)
     cursor = index_at(line, *to)
     if not back:
         back.append((*here, None))
     if resolve(line, back[-1])[:2] != to:
         back.append((*to, None))
-    save(pane, info, moved_to(line, [back, []], cursor))
+    save(pane, info, moved_to(line, [back, []], cursor), now)
 
 
 def on_line(pane, info):
@@ -573,7 +619,8 @@ def travel(pane, way):
         if way == 0:
             tmux('send-keys', '-t', pane, '-X', 'cancel')
         return
-    before = load(pane, info)
+    now = input_area(pane, info)
+    before = load(pane, info, now)
     history = [list(places) for places in before]
     here = (int(info['cursor_y']), int(info['cursor_x']))
     line = on_line(pane, info)
@@ -588,9 +635,9 @@ def travel(pane, way):
         row, col, i = resolve(line, back[-1])
         if (row, col) != here:
             break
-    save(pane, info, moved_to(line, history, i))
+    save(pane, info, moved_to(line, history, i), now)
     if not go(pane, info, row, col):
-        save(pane, info, before)            # not there: kept for another try
+        save(pane, info, before, now)       # not there: kept for another try
 
 
 def mark(pane, key):

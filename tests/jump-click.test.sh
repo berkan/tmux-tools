@@ -408,6 +408,33 @@ print(c.resolve(line, (3, 10, 'start 44')), c.resolve(line, (5, 9, 'start 2')),
       c.moved_to(line, [[(3, 10, 'start 44'), (5, 9, 'start 2')]], 10))
 EOF
 )"
+bash_line 'echo alpha beta gamma'
+pick b; inner send-keys -t "$PANE" End C-u; inner send-keys -t "$PANE" -l 'echo one two'; sleep 0.2; back
+expect "the input's text replaced (a new prompt): the history gone" "one twoX" "$(ran)"
+# The input is the same while most of its text is (edits between jumps are
+# local); its marks (❯, $) do not count. Moved as a whole, the places move too.
+expect "the same input: by its text" "True True False False False False" "$(python3 - "$CLICK" <<'EOF'
+import importlib.machinery as m, sys
+sys.dont_write_bytecode = True
+c = m.SourceFileLoader('c', sys.argv[1]).load_module()
+print(*[c.same_input(a, b) for a, b in [
+    ('$ echo alpha beta', '$ one echo alpha beta'),
+    ('❯ fix the bug\n  and the test', '❯ fix the bug\n  and the tests too'),
+    ('$ echo alpha beta', '$ '), ('❯ hi', '❯ '), ('$ echo alpha', '$ ls -l'),
+    ('❯ fix the bug\n  and the test', '❯ write the docs')]])
+EOF
+)"
+expect "  ... moved as a whole: the places with it; else kept, or gone" \
+    "[[(3, 3, None)], [(4, 1, 'end 2')]] [[(5, 3, None)], []] [[], []]" "$(python3 - "$CLICK" <<'EOF'
+import importlib.machinery as m, sys
+sys.dont_write_bytecode = True
+c = m.SourceFileLoader('c', sys.argv[1]).load_module()
+h = [[(5, 3, None)], [(6, 1, 'end 2')]]
+print(c.carried([[(5, 3, None)], [(6, 1, 'end 2')]], (5, '❯ a\n  b'), (3, '❯ a\n  b')),
+      c.carried([[(5, 3, None)], []], (5, '❯ a\n  b'), (5, '❯ a\n  bc')),
+      c.carried(h, (5, '❯ a b c'), (5, '❯ x')))
+EOF
+)"
 expect "a key's bytes in the popup: as tmux passes them on" "1b07 1b47 1b67 07 none none" "$(python3 - "$CLICK" <<'EOF'
 import importlib.machinery as m, sys
 sys.dont_write_bytecode = True
