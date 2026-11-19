@@ -390,29 +390,21 @@ pick b; inner send-keys -t "$PANE" -N 2 Right; sleep 0.2; pick a; back
 expect "the cursor moved after a jump: back to where the jump went" "alpha Xbeta gamma" "$(ran)"
 bash_line 'echo alpha beta gamma'
 pick b; inner send-keys -t "$PANE" -N 2 Right; sleep 0.2; back
-expect "  ... and back from there: to before the jump" "alpha beta gammaX" "$(ran)"
+expect "  ... and back from there: to where the jump went" "alpha Xbeta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; inner send-keys -t "$PANE" -N 2 Right; sleep 0.2; back; back
+expect "  ... and back again: to before the jump" "alpha beta gammaX" "$(ran)"
 bash_line 'echo alpha beta gamma'
 pick b; back; pick g; forward
 expect "a jump after back: no forward left" "alpha beta Xgamma" "$(ran)"
 bash_line 'echo alpha beta gamma'
 pick b; pick a; inner send-keys -t "$PANE" -l 'one '; sleep 0.2; back; back
 expect "text typed at the cursor: each place kept in the text" "one alpha beta gammaX" "$(ran)"
-# A program that wraps its input itself (Claude Code) has a line per row: a
-# place kept in another row's text stays in that row, not the cursor's.
-expect "a place in another line's text: where it was" "(3, 10, None) (5, 2, 2) [[(3, 10, None), (5, 2, 'start 2')]]" "$(python3 - "$CLICK" <<'EOF'
-import importlib.machinery as m, sys
-sys.dont_write_bytecode = True
-c = m.SourceFileLoader('c', sys.argv[1]).load_module()
-line = (5, 5, '  also: hello world', 80)              # the cursor's line: row 5
-print(c.resolve(line, (3, 10, 'start 44')), c.resolve(line, (5, 9, 'start 2')),
-      c.moved_to(line, [[(3, 10, 'start 44'), (5, 9, 'start 2')]], 10))
-EOF
-)"
 bash_line 'echo alpha beta gamma'
 pick b; inner send-keys -t "$PANE" End C-u; inner send-keys -t "$PANE" -l 'echo one two'; sleep 0.2; back
 expect "the input's text replaced (a new prompt): the history gone" "one twoX" "$(ran)"
 # The input is the same while most of its text is (edits between jumps are
-# local); its marks (❯, $) do not count. Moved as a whole, the places move too.
+# local); its blanks and marks (❯, $) do not count.
 expect "the same input: by its text" "True True False False False False" "$(python3 - "$CLICK" <<'EOF'
 import importlib.machinery as m, sys
 sys.dont_write_bytecode = True
@@ -424,15 +416,25 @@ print(*[c.same_input(a, b) for a, b in [
     ('❯ fix the bug\n  and the test', '❯ write the docs')]])
 EOF
 )"
-expect "  ... moved as a whole: the places with it; else kept, or gone" \
-    "[[(3, 3, None)], [(4, 1, 'end 2')]] [[(5, 3, None)], []] [[], []]" "$(python3 - "$CLICK" <<'EOF'
+# A place is kept as a place in the input's text: the non-blank characters
+# before it, counted from the end away from the cursor. So it stays put when
+# a newline is typed (Claude Code's box grows up when its screen is full, else
+# down), when the input moves as a whole, and when its text wraps anew.
+expect "  ... a newline typed, the input moved, its text wrapped anew: each place where it was" \
+    "[(6, 10), (4, 2)] [(7, 10), (5, 2)] [(4, 10), (3, 2)] [(6, 14), (5, 2)] [(0, 13)]" "$(python3 - "$CLICK" <<'EOF'
 import importlib.machinery as m, sys
 sys.dont_write_bytecode = True
 c = m.SourceFileLoader('c', sys.argv[1]).load_module()
-h = [[(5, 3, None)], [(6, 1, 'end 2')]]
-print(c.carried([[(5, 3, None)], [(6, 1, 'end 2')]], (5, '❯ a\n  b'), (3, '❯ a\n  b')),
-      c.carried([[(5, 3, None)], []], (5, '❯ a\n  b'), (5, '❯ a\n  bc')),
-      c.carried(h, (5, '❯ a b c'), (5, '❯ x')))
+was = (5, ['❯ fix the bug', '  and the test'])          # (first row, rows)
+kept = c.anchored(was, [c.place_of(was, (6, 10)), c.place_of(was, (5, 2))],   # test, fix
+                  c.place_of(was, (5, 13)))               # the cursor: after bug
+for now in [(4, ['❯ fix the bug', '  ', '  and the test']),
+            (5, ['❯ fix the bug', '  ', '  and the test']),
+            (3, ['❯ fix the bug', '  and the test']),
+            (5, ['❯ fix the', '  bug and the test'])]:
+    print([c.cell_of(now, p) for p in c.placed(now, kept)], end=' ')
+line = (0, ['$ echo alpha'])                              # after a space typed
+print([c.cell_of(line, p) for p in c.placed(line, c.anchored(line, [c.place_of(line, (0, 13))], c.place_of(line, (0, 0))))])
 EOF
 )"
 expect "a key's bytes in the popup: as tmux passes them on" "1b07 1b47 1b67 07 none none" "$(python3 - "$CLICK" <<'EOF'
@@ -482,7 +484,8 @@ bash_line 'echo alpha beta'
 tmux -L "$OUTER" send-keys C-a; sleep 0.3
 inner send-keys -t "$PANE" -N 5 Right; inner send-keys -t "$PANE" -l 'new '; sleep 0.2
 tmux -L "$OUTER" send-keys M-g; sleep 0.5
-expect "  ... text typed before the place: back to it still (the line's end)" "new alpha betaX" "$(ran)"
+tmux -L "$OUTER" send-keys M-g; sleep 0.5
+expect "  ... text typed before the place: back to it still (the line's end; moved away: twice)" "new alpha betaX" "$(ran)"
 bash_line 'echo alpha beta'
 inner send-keys -t "$PANE" -N 4 Left; sleep 0.2
 tmux -L "$OUTER" send-keys C-e; sleep 0.3

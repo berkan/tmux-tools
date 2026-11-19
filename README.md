@@ -215,20 +215,21 @@ nearest back first, then forward.
 | `@jump-click-mark-keys` | other keys, without the prefix, that count as jumps, e.g. `C-a C-e` [none]: each notes where the cursor is, then goes on to the program as it is |
 
 Each pane keeps a history of its jumps, as a browser does: where each
-jump went, and where the first started. Back goes to where the jump before
-the last went (from where the last went, or from where the cursor has been
-moved since), then the one before, and at the first, to where it started;
+jump went, and where the first started. Back goes to where the last jump
+went when the cursor has been moved since (typing there is not moving
+it), else to where the one before
+went, then the one before, and at the first, to where it started;
 forward retraces them; a jump after back drops what was forward. Both move
 the program's cursor the way a jump does. After a jump in copy mode, back
-leaves copy mode. Each place is kept as a place in the line's text, as an
-Emacs marker: counted from the end away from the cursor, so text typed at
-the cursor leaves it where it was (`Cmd+A`, text typed at the start, back:
-the end of the line). For a jump to another line, it is the cell on
-screen. The history is the input's: when the input's text is no longer
-mostly what it was (a new prompt, a shell's next line), it is gone; when
-the input has moved as a whole (Claude Code's, as its transcript grows),
-its places move with it. Scrolling in copy mode moves nothing, and keeps
-it. A respawned pane starts with none.
+leaves copy mode. Each place is kept as a place in the input's text, as an
+Emacs marker: its non-blank characters counted from the end away from the
+cursor, so text typed at the cursor leaves it where it was (`Cmd+A`, text
+typed at the start, back: the end of the line), and so do a newline typed,
+the text wrapped anew, and the input moving (Claude Code's, as its box
+grows or its transcript does). The history is the input's: when the
+input's text is no longer mostly what it was (a new prompt, a shell's next
+line), it is gone. Scrolling in copy mode moves nothing, and keeps it. A
+respawned pane starts with none.
 
 In jump-click's popup (the dimmed screen that waits for the character),
 tmux passes on a key it knows by name (`M-g`, `C-M-g`), but not a user key

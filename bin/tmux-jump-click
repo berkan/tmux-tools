@@ -37,21 +37,22 @@
 #
 # Back and forward: each pane keeps a history of its jumps, as a browser
 # does: where each jump went, and where the first one started from.
-# tmux-jump-click back PANE returns the program's cursor to where the jump
-# before the last went (the same way: a click, or Left/Right), and on to the
-# one before, not to where the cursor was moved after a jump;
+# tmux-jump-click back PANE returns the program's cursor (the same way: a
+# click, or Left/Right) to where the last jump went, when it has been moved
+# since (not by typing there), else to where the one before went, and on to
+# the one before; never to where the cursor was moved after a jump.
 # tmux-jump-click forward PANE goes the other way, to where back came from.
-# A jump after back drops what was forward. After a jump in copy mode, back leaves copy mode. Keys in
+# A jump after back drops what was forward. After a jump in copy mode, back
+# leaves copy mode. Keys in
 # @jump-click-mark-keys (C-a C-e: none by default) count as jumps too: each
 # first notes where the cursor is, then goes on to the program as it is.
-# Each place is kept as a place in the line's text, counted from the end away
-# from the cursor, as an Emacs marker moves: text typed at the cursor leaves
-# it where it was in the text (on the cursor's line; elsewhere, or after a
-# jump to another line, it is the cell on screen it was). The history is the
-# input's: when the text of the rows the cursor can reach is no longer
-# mostly what it was (a new prompt, a shell's next line), it is gone; when
-# that text has moved as a whole, its places move with it. Scrolling in copy
-# mode moves nothing. A pane respawned starts with none.
+# Each place is kept as a place in the input's text (the rows the cursor
+# can reach), counted in its non-blank characters from the end away from
+# the cursor, as an Emacs marker moves: text typed at the cursor, a newline
+# typed, the text wrapped anew or the input moved leave it where it was in
+# the text. The history is the input's: when that text is no longer mostly
+# what it was (a new prompt, a shell's next line), it is gone. Scrolling in
+# copy mode moves nothing. A pane respawned starts with none.
 #
 #   tmux-jump-click bind   bind the keys in the @jump-click-key option (default
 #       C-j; several separated by spaces) after the prefix, the ones in
@@ -434,8 +435,7 @@ def main(pane, client):
         copy_mode_jump(pane, lines, row, col, select=True)
         return
     here = (int(info['cursor_y']), int(info['cursor_x']))
-    line = on_line(pane, info)
-    record(pane, info, line, here, (row, col))
+    record(pane, info, here, (row, col))
     if not go(pane, info, row, col):
         copy_mode_jump(pane, lines, row, col)
 
@@ -443,24 +443,93 @@ def main(pane, client):
 BACK = '@jump-click-back'                   # the history, per pane: places
 FORWARD = '@jump-click-forward'             # back and forward go to, the
 PID = '@jump-click-pid'                     # nearest last; whose it is;
-INPUT = '@jump-click-input'                 # and the input it is in
+INPUT = '@jump-click-input'                 # and the input it is in;
+LANDING = '@jump-click-landing'             # where the last jump went, moved on by text typed there
 KEEP = 100                                  # places kept back
 MARKS = '$#%>'                              # a prompt's marks, as ❯ ›
 
+# The history's places are places in the input's text: the rows the cursor
+# can reach, as (first row, [rows]). A place is (P, None): at the P-th
+# non-blank character (counting from 0), or (P, (ROWS, COLS)): in the blanks
+# after the P non-blank characters before it, ROWS rows down from the last
+# of them and COLS columns on (from its end on the same row, else from the
+# row's start). Blanks, row breaks and where the program wraps the text do
+# not count, so a place stays put when a newline is typed, when the text
+# wraps anew, and when the input moves.
+
 
 def input_area(pane, info):
-    """(first row, text) of the input the cursor is in: the rows it can reach."""
+    """(first row, [rows]) of the input the cursor is in: the rows it can reach."""
     lines = tmux('capture-pane', '-p', '-t', pane).rstrip('\n').split('\n')
     first, last = reachable_rows(pane, info, lines)
-    return first, '\n'.join(line.rstrip() for line in lines[first:last + 1])
+    return first, lines[first:last + 1]
+
+
+def chars_of(area):
+    """(row, col, width) of each non-blank character of AREA."""
+    first, rows = area
+    return [(first + i, col, cell_width(ch)) for i, line in enumerate(rows)
+            for col, ch in cells(line) if not ch.isspace() and cell_width(ch)]
+
+
+def place_of(area, cell):
+    """The place (above) of CELL (row, col) in AREA."""
+    chars = chars_of(area)
+    p = sum(1 for r, c, _ in chars if (r, c) < cell)
+    if p < len(chars) and chars[p][:2] == cell:
+        return p, None
+    r, end = (chars[p - 1][0], chars[p - 1][1] + chars[p - 1][2]) if p else (area[0], 0)
+    return p, (0, cell[1] - end) if cell[0] == r else (cell[0] - r, cell[1])
+
+
+def cell_of(area, place):
+    """The cell (row, col) of PLACE (above) in AREA as it is now."""
+    chars = chars_of(area)
+    p, gap = place
+    p = max(0, min(len(chars), p))
+    if gap is None:
+        if p < len(chars):
+            return chars[p][:2]
+        gap = (0, 0)
+    r, end = (chars[p - 1][0], chars[p - 1][1] + chars[p - 1][2]) if p else (area[0], 0)
+    rows, cols = gap
+    last = area[0] + max(0, len(area[1]) - 1)
+    return (r, end + cols) if rows == 0 else (min(r + rows, last), cols)
+
+
+def anchored(area, places, cursor):
+    """PLACES as kept: counted from the end of AREA's text when after the
+    place CURSOR, where the edits will be, else from its start, as an Emacs
+    marker moves with text typed before it."""
+    n = len(chars_of(area))
+    out = []
+    for p, gap in places:
+        side, count = ('end', n - p) if p > cursor[0] else ('start', p)
+        out.append(f'{side} {count} ' + ('at' if gap is None else '%d %d' % gap))
+    return out
+
+
+def placed(area, kept):
+    """The places (above) in AREA of the places KEPT (anchored)."""
+    n = len(chars_of(area))
+    out = []
+    for item in kept:
+        f = item.split()
+        if len(f) not in (3, 4) or f[0] not in ('start', 'end') or not f[1].isdigit():
+            continue
+        p = int(f[1]) if f[0] == 'start' else n - int(f[1])
+        out.append((p, None if f[2:] == ['at'] else tuple(map(int, f[2:]))))
+    return out
 
 
 def same_input(old, new):
     """Whether NEW is the input OLD was, edited: most of OLD's text is still
     at its start or its end (edits between jumps are local), not counting
-    the prompt's marks. A new prompt, or a shell's next line, shares little."""
+    its blanks nor the prompt's marks. A new prompt, or a shell's next line,
+    shares little."""
     def text(t):
-        return t.lstrip(''.join(c for c in t[:8] if c.isspace() or c in MARKS
+        t = ''.join(t.split())
+        return t.lstrip(''.join(c for c in t[:4] if c in MARKS
                                 or not (c.isascii() or c.isalnum())))
     a, b = text(old), text(new)
     if not a:
@@ -471,133 +540,55 @@ def same_input(old, new):
     return 2 * (p + q) > len(a)
 
 
-def carried(history, was, now):
-    """HISTORY, kept in the input WAS (first row, text), as it is in the input
-    NOW: gone when that is another input; when it is the same text moved as a
-    whole, its places moved with it."""
-    if not same_input(was[1], now[1]):
-        return [[], []]
-    if was[1] == now[1] and was[0] != now[0]:
-        d = now[0] - was[0]
-        return [[(row + d, col, where) for row, col, where in places] for places in history]
-    return history
-
-
-def load(pane, info, now):
-    """[back, forward]: lists of places (row, col, anchor or None), the
-    nearest last; empty when the history is another program's, or another
-    input's than NOW (input_area)."""
+def load(pane, info, area):
+    """[back, forward]: lists of places (above) in AREA, the nearest last;
+    empty when the history is another program's, or another input's."""
     if tmux('show-options', '-pqv', '-t', pane, PID).strip() != info['pane_pid']:
         return [[], []]
-    first, _, text = tmux('show-options', '-pqv', '-t', pane, INPUT).rstrip('\n').partition('\n')
-    if not first.lstrip('-').isdigit():
+    was = tmux('show-options', '-pqv', '-t', pane, INPUT).rstrip('\n')
+    if not same_input(was, '\n'.join(area[1])):
         return [[], []]
-    out = []
-    for name in (BACK, FORWARD):
-        places = []
-        for item in tmux('show-options', '-pqv', '-t', pane, name).strip().split(','):
-            f = item.split()
-            if len(f) in (2, 4):
-                places.append((int(f[0]), int(f[1]), ' '.join(f[2:]) or None))
-        out.append(places)
-    return carried(out, (int(first), text), now)
+    return [placed(area, tmux('show-options', '-pqv', '-t', pane, name).strip().split(','))
+            for name in (BACK, FORWARD)]
 
 
-def save(pane, info, history, now):
+def save(pane, info, area, history, cursor):
+    """Keep HISTORY, places in AREA, for the cursor at the place CURSOR."""
     tmux('set-option', '-p', '-t', pane, PID, info['pane_pid'])
-    tmux('set-option', '-p', '-t', pane, INPUT, '%d\n%s' % now)
+    tmux('set-option', '-p', '-t', pane, INPUT, '\n'.join(area[1]))
     for name, places in zip((BACK, FORWARD), history):
-        text = ','.join(' '.join(str(x) for x in p if x is not None) for p in places[-KEEP:])
-        tmux('set-option', '-p', '-t', pane, name, text)
-
-
-def resolve(line, place):
-    """(row, col, index) of PLACE now: index in LINE's text, None if not on it.
-    Its place in the text counts only on LINE (the cursor's): a place on
-    another line, as each row of an input the program wraps itself, keeps its
-    cell."""
-    row, col, where = place
-    if where and line[0] <= row <= line[1]:
-        side, n = where.split()
-        text = line[2]
-        i = max(0, min(len(text), int(n) if side == 'start' else len(text) - int(n)))
-        return (*cell_at(line, i), i)
-    return row, col, index_at(line, row, col)
-
-
-def moved_to(line, history, cursor):
-    """HISTORY anchored again for the cursor at index CURSOR of LINE's text:
-    a place after it is counted from the line's end, the rest from its start;
-    as it was when CURSOR is None (the cursor off the line)."""
-    if cursor is None:
-        return history
-    out = []
-    for places in history:
-        out.append([])
-        for p in places:
-            row, col, i = resolve(line, p)
-            out[-1].append((row, col, anchor(line[2], i, cursor)))
-    return out
+        tmux('set-option', '-p', '-t', pane, name,
+             ','.join(anchored(area, places[-KEEP:], cursor)))
+    # The last jump's place again, counted from the end whatever the cursor:
+    # text typed there moves it on, as the cursor.
+    tmux('set-option', '-p', '-t', pane, LANDING,
+         ','.join(anchored(area, history[0][-1:], (-1, None))))
 
 
 def history_places(pane, info, height):
     """(row, col) of each place in the history, now: the nearest back first,
     then forward; each once, none off screen nor where the cursor is."""
-    back, forward = load(pane, info, input_area(pane, info))
-    line = on_line(pane, info)
+    area = input_area(pane, info)
+    back, forward = load(pane, info, area)
     out = [(int(info['cursor_y']), int(info['cursor_x']))]
     for p in back[::-1] + forward[::-1]:
-        cell = resolve(line, p)[:2]
+        cell = cell_of(area, p)
         if cell not in out and 0 <= cell[0] < height:
             out.append(cell)
     return out[1:]
 
 
-def record(pane, info, line, here, to):
+def record(pane, info, here, to):
     """A jump from HERE to TO (row, col): TO goes on the back list, after HERE
     when the list is empty, and forward is emptied. The back list ends with
     where the last jump went, not where the cursor went after it."""
-    now = input_area(pane, info)
-    back, _ = load(pane, info, now)
-    cursor = index_at(line, *to)
+    area = input_area(pane, info)
+    back, _ = load(pane, info, area)
     if not back:
-        back.append((*here, None))
-    if resolve(line, back[-1])[:2] != to:
-        back.append((*to, None))
-    save(pane, info, moved_to(line, [back, []], cursor), now)
-
-
-def on_line(pane, info):
-    """(first_row, last_row, text, width) of the cursor's line, its text
-    without the blanks after it."""
-    first, last, text = cursor_line(pane, info)
-    return first, last, text.rstrip(), int(info['pane_width'])
-
-
-def index_at(line, row, col):
-    """The characters of LINE's text before cell (ROW, COL); None when the
-    cell is not on LINE."""
-    first, last, text, width = line
-    if not first <= row <= last:
-        return None
-    return min(char_index(text, (row - first) * width + col), len(text))
-
-
-def cell_at(line, i):
-    """(row, col) of the place before character I of LINE's text."""
-    first, _, text, width = line
-    offset = sum(cell_width(ch) for ch in text[:i])
-    return first + offset // width, offset % width
-
-
-def anchor(text, mark, cursor):
-    """The place MARK (an index of TEXT) as its distance from the end of TEXT
-    away from CURSOR, where the edits will be, as an Emacs marker moves with
-    text typed before it: "end N" when it is after the cursor, else
-    "start N"; None when either is not on the line."""
-    if mark is None or cursor is None:
-        return None
-    return f'end {len(text) - mark}' if mark > cursor else f'start {mark}'
+        back.append(place_of(area, here))
+    if cell_of(area, back[-1]) != to:
+        back.append(place_of(area, to))
+    save(pane, info, area, [back, []], place_of(area, to))
 
 
 def go(pane, info, row, col):
@@ -619,39 +610,41 @@ def travel(pane, way):
         if way == 0:
             tmux('send-keys', '-t', pane, '-X', 'cancel')
         return
-    now = input_area(pane, info)
-    before = load(pane, info, now)
+    area = input_area(pane, info)
+    before = load(pane, info, area)
     history = [list(places) for places in before]
     here = (int(info['cursor_y']), int(info['cursor_x']))
-    line = on_line(pane, info)
     back, forward = history
-    while True:                         # a place where the cursor is: passed
-        if way == 0 and len(back) >= 2:
-            forward.append(back.pop())
-        elif way == 1 and forward:
-            back.append(forward.pop())
-        else:
-            return
-        row, col, i = resolve(line, back[-1])
-        if (row, col) != here:
-            break
-    save(pane, info, moved_to(line, history, i), now)
-    if not go(pane, info, row, col):
-        save(pane, info, before, now)       # not there: kept for another try
+    landed = back[-1:] + placed(area, tmux('show-options', '-pqv', '-t', pane, LANDING).split(','))
+    if way == 0 and back and here not in [cell_of(area, p) for p in landed]:
+        row, col = cell_of(area, back[-1])  # moved since the jump: back to where it went
+    else:
+        while True:                     # a place where the cursor is: passed
+            if way == 0 and len(back) >= 2:
+                forward.append(back.pop())
+            elif way == 1 and forward:
+                back.append(forward.pop())
+            else:
+                return
+            row, col = cell_of(area, back[-1])
+            if (row, col) != here:
+                break
+    save(pane, info, area, history, back[-1])
+    if not go(pane, info, row, col):        # not there: kept for another try
+        save(pane, info, area, before, place_of(area, here))
 
 
 def mark(pane, key):
     """A key of @jump-click-mark-keys: note where the cursor is, send KEY on,
-    and once the cursor has moved, the place in the line's text (anchor). Run
-    by its binding in the foreground: tmux holds the keys typed after it
-    until this is done, so the text read is the text the key left."""
+    and once the cursor has moved, note the jump. Run by its binding in the
+    foreground: tmux holds the keys typed after it until this is done, so the
+    text read is the text the key left."""
     info = read_info(pane)
     here = (int(info['cursor_y']), int(info['cursor_x']))
     tmux('send-keys', '-t', pane, key)
     cursor_moved(pane, here, wait=0.15)
     info = read_info(pane)
-    line = on_line(pane, info)
-    record(pane, info, line, here, (int(info['cursor_y']), int(info['cursor_x'])))
+    record(pane, info, here, (int(info['cursor_y']), int(info['cursor_x'])))
 
 
 def unbind_ours(table, key):
