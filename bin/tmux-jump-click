@@ -36,11 +36,12 @@
 #
 #
 # Back and forward: each pane keeps a history of its jumps, as a browser
-# does. tmux-jump-click back PANE returns the program's cursor to where it
-# was before the last jump (the same way: a click, or Left/Right), and again
-# to where it was before the one before; tmux-jump-click forward PANE goes
-# the other way, to where back came from. A jump after back drops what was
-# forward. After a jump in copy mode, back leaves copy mode. Keys in
+# does: where each jump went, and where the first one started from.
+# tmux-jump-click back PANE returns the program's cursor to where the jump
+# before the last went (the same way: a click, or Left/Right), and on to the
+# one before, not to where the cursor was moved after a jump;
+# tmux-jump-click forward PANE goes the other way, to where back came from.
+# A jump after back drops what was forward. After a jump in copy mode, back leaves copy mode. Keys in
 # @jump-click-mark-keys (C-a C-e: none by default) count as jumps too: each
 # first notes where the cursor is, then goes on to the program as it is.
 # Each place is kept as a place in the line's text, counted from the end away
@@ -431,7 +432,7 @@ def main(pane, client):
         return
     here = (int(info['cursor_y']), int(info['cursor_x']))
     line = on_line(pane, info)
-    record(pane, info, line, here, index_at(line, row, col))
+    record(pane, info, line, here, (row, col))
     if not go(pane, info, row, col):
         copy_mode_jump(pane, lines, row, col)
 
@@ -507,13 +508,16 @@ def history_places(pane, info, height):
     return out[1:]
 
 
-def record(pane, info, line, here, cursor):
-    """A jump from HERE (row, col) to index CURSOR of LINE's text (None: off
-    it): HERE goes on the back list, and forward is emptied."""
+def record(pane, info, line, here, to):
+    """A jump from HERE to TO (row, col): TO goes on the back list, after HERE
+    when the list is empty, and forward is emptied. The back list ends with
+    where the last jump went, not where the cursor went after it."""
     back, _ = load(pane, info)
-    i = index_at(line, *here)
-    if not (back and resolve(line, back[-1])[:2] == here):
-        back.append((*here, anchor(line[2], i, cursor)))
+    cursor = index_at(line, *to)
+    if not back:
+        back.append((*here, None))
+    if resolve(line, back[-1])[:2] != to:
+        back.append((*to, None))
     save(pane, info, moved_to(line, [back, []], cursor))
 
 
@@ -573,14 +577,17 @@ def travel(pane, way):
     history = [list(places) for places in before]
     here = (int(info['cursor_y']), int(info['cursor_x']))
     line = on_line(pane, info)
-    src, dst = history[way], history[1 - way]
-    while src:                          # a place where the cursor is: passed
-        row, col, i = resolve(line, src.pop())
+    back, forward = history
+    while True:                         # a place where the cursor is: passed
+        if way == 0 and len(back) >= 2:
+            forward.append(back.pop())
+        elif way == 1 and forward:
+            back.append(forward.pop())
+        else:
+            return
+        row, col, i = resolve(line, back[-1])
         if (row, col) != here:
             break
-    else:
-        return
-    dst.append((*here, anchor(line[2], index_at(line, *here), i)))
     save(pane, info, moved_to(line, history, i))
     if not go(pane, info, row, col):
         save(pane, info, before)            # not there: kept for another try
@@ -597,7 +604,7 @@ def mark(pane, key):
     cursor_moved(pane, here, wait=0.15)
     info = read_info(pane)
     line = on_line(pane, info)
-    record(pane, info, line, here, index_at(line, int(info['cursor_y']), int(info['cursor_x'])))
+    record(pane, info, line, here, (int(info['cursor_y']), int(info['cursor_x'])))
 
 
 def unbind_ours(table, key):

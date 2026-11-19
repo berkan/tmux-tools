@@ -386,6 +386,12 @@ bash_line 'echo alpha beta gamma'
 pick b; pick a; back; back; forward; forward; forward
 expect "  ... and again: nothing further forward" "Xalpha beta gamma" "$(ran)"
 bash_line 'echo alpha beta gamma'
+pick b; inner send-keys -t "$PANE" -N 2 Right; sleep 0.2; pick a; back
+expect "the cursor moved after a jump: back to where the jump went" "alpha Xbeta gamma" "$(ran)"
+bash_line 'echo alpha beta gamma'
+pick b; inner send-keys -t "$PANE" -N 2 Right; sleep 0.2; back
+expect "  ... and back from there: to before the jump" "alpha beta gammaX" "$(ran)"
+bash_line 'echo alpha beta gamma'
 pick b; back; pick g; forward
 expect "a jump after back: no forward left" "alpha beta Xgamma" "$(ran)"
 bash_line 'echo alpha beta gamma'

@@ -210,12 +210,14 @@ nearest back first, then forward.
 | option | |
 |---|---|
 | `@jump-click-key` | the key(s) after the prefix [`C-j`]; several separated by spaces |
-| `@jump-click-back-key` | the key, without the prefix, that goes back to where the cursor was before the last jump, and before the one before that, ... [none] |
+| `@jump-click-back-key` | the key, without the prefix, that goes back through the places jumps went to, to where the first started [none] |
 | `@jump-click-forward-key` | the key, without the prefix, that goes forward again, to where back came from [none] |
 | `@jump-click-mark-keys` | other keys, without the prefix, that count as jumps, e.g. `C-a C-e` [none]: each notes where the cursor is, then goes on to the program as it is |
 
-Each pane keeps a history of its jumps, as a browser does: back goes to
-where the cursor was before the last jump, then before the one before;
+Each pane keeps a history of its jumps, as a browser does: where each
+jump went, and where the first started. Back goes to where the jump before
+the last went (from where the last went, or from where the cursor has been
+moved since), then the one before, and at the first, to where it started;
 forward retraces them; a jump after back drops what was forward. Both move
 the program's cursor the way a jump does. After a jump in copy mode, back
 leaves copy mode. Each place is kept as a place in the line's text, as an
